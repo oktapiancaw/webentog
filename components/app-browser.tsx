@@ -76,7 +76,7 @@ export function StorageBrowser({ files = mockFiles, onNavigate, onDownload }: St
                   </div>
                 </td>
                 <td className="p-4 px-6 align-middle text-muted-foreground">
-                  {file.size}
+                  {file.size} KB
                 </td>
                 <td className="p-4 px-6 align-middle text-muted-foreground">
                   {file.lastModified}
