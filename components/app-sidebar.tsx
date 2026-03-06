@@ -12,28 +12,34 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"use client"
+'use client';
 
-import * as React from "react"
-import { useState } from "react"
+import * as React from 'react';
+import { useState } from 'react';
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarHeader,
-} from "@/components/ui/sidebar"
-import { Settings, EyeOff, ArrowRightToLine, Database, Eye } from "lucide-react"
+} from '@/components/ui/sidebar';
+import {
+  Settings,
+  EyeOff,
+  ArrowRightToLine,
+  Database,
+  Eye,
+} from 'lucide-react';
 
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Button } from "@/components/ui/button"
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
+} from '@/components/ui/select';
 
 export interface ConnectionConfig {
   endpoint: string;
@@ -47,22 +53,24 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onConnect?: (config: ConnectionConfig) => void;
 }
 export function AppSidebar({ onConnect, ...props }: AppSidebarProps) {
-  const [endpoint, setEndpoint] = useState("https://s3.us-east-1.amazonaws.com")
-  const [accessKey, setAccessKey] = useState("AKIA27XQ5Z7Y4EXAMPLE")
-  const [secretKey, setSecretKey] = useState("")
-  const [bucket, setBucket] = useState("prod-assets-v1")
-  const [region, setRegion] = useState("us-east-1")
+  const [endpoint, setEndpoint] = useState(
+    'https://s3.us-east-1.amazonaws.com'
+  );
+  const [accessKey, setAccessKey] = useState('AKIA27XQ5Z7Y4EXAMPLE');
+  const [secretKey, setSecretKey] = useState('');
+  const [bucket, setBucket] = useState('prod-assets-v1');
+  const [region, setRegion] = useState('us-east-1');
 
-  const [showSecret, setShowSecret] = useState(false)
+  const [showSecret, setShowSecret] = useState(false);
 
   const handleConnect = () => {
     const config = { endpoint, accessKey, secretKey, bucket, region };
-    console.log("Submitting connection config:", config);
-    
+    console.log('Submitting connection config:', config);
+
     if (onConnect) {
       onConnect(config);
     }
-  }
+  };
   return (
     <Sidebar collapsible="offcanvas" {...props}>
       <SidebarHeader className="pb-10">
@@ -85,37 +93,49 @@ export function AppSidebar({ onConnect, ...props }: AppSidebarProps) {
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="endpoint" className="text-xs text-muted-foreground">Endpoint URL</Label>
-            <Input 
-              id="endpoint" 
-              value={endpoint} 
-              onChange={(e) => setEndpoint(e.target.value)} 
+            <Label htmlFor="endpoint" className="text-xs text-muted-foreground">
+              Endpoint URL
+            </Label>
+            <Input
+              id="endpoint"
+              value={endpoint}
+              onChange={(e) => setEndpoint(e.target.value)}
             />
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="access-key" className="text-xs text-muted-foreground">Access Key</Label>
-            <Input 
-              id="access-key" 
-              value={accessKey} 
-              onChange={(e) => setAccessKey(e.target.value)} 
+            <Label
+              htmlFor="access-key"
+              className="text-xs text-muted-foreground"
+            >
+              Access Key
+            </Label>
+            <Input
+              id="access-key"
+              value={accessKey}
+              onChange={(e) => setAccessKey(e.target.value)}
             />
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="secret-key" className="text-xs text-muted-foreground">Secret Key</Label>
+            <Label
+              htmlFor="secret-key"
+              className="text-xs text-muted-foreground"
+            >
+              Secret Key
+            </Label>
             <div className="relative">
-              <Input 
-                id="secret-key" 
-                type={showSecret ? "text" : "password"} 
+              <Input
+                id="secret-key"
+                type={showSecret ? 'text' : 'password'}
                 value={secretKey}
                 onChange={(e) => setSecretKey(e.target.value)}
-                placeholder="*******************" 
-                className="pr-10" 
+                placeholder="*******************"
+                className="pr-10"
               />
-              <Button 
-                variant="ghost" 
-                size="icon" 
+              <Button
+                variant="ghost"
+                size="icon"
                 className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                 onClick={() => setShowSecret(!showSecret)}
                 type="button"
@@ -132,15 +152,19 @@ export function AppSidebar({ onConnect, ...props }: AppSidebarProps) {
 
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-2">
-              <Label htmlFor="bucket" className="text-xs text-muted-foreground">Bucket Name</Label>
-              <Input 
-                id="bucket" 
+              <Label htmlFor="bucket" className="text-xs text-muted-foreground">
+                Bucket Name
+              </Label>
+              <Input
+                id="bucket"
                 value={bucket}
                 onChange={(e) => setBucket(e.target.value)}
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="region" className="text-xs text-muted-foreground">Region</Label>
+              <Label htmlFor="region" className="text-xs text-muted-foreground">
+                Region
+              </Label>
               {/* Select uses onValueChange instead of onChange */}
               <Select value={region} onValueChange={setRegion}>
                 <SelectTrigger id="region">
@@ -159,7 +183,7 @@ export function AppSidebar({ onConnect, ...props }: AppSidebarProps) {
 
       <SidebarFooter className="border-t p-4">
         <div className="flex flex-col gap-3">
-          <Button 
+          <Button
             className="w-full justify-center gap-2 bg-[#2524D1] hover:bg-blue-800 text-white"
             onClick={handleConnect}
           >
@@ -169,5 +193,5 @@ export function AppSidebar({ onConnect, ...props }: AppSidebarProps) {
         </div>
       </SidebarFooter>
     </Sidebar>
-  )
+  );
 }

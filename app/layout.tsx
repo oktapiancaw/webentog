@@ -12,27 +12,26 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import type { Metadata, Viewport } from "next";
-import {  Inter } from "next/font/google";
-import { ThemeProvider } from "next-themes";
-import "./globals.css";
-import { Suspense } from "react";
+import type { Metadata, Viewport } from 'next';
+import { Inter } from 'next/font/google';
+import { ThemeProvider } from 'next-themes';
+import './globals.css';
+import { Suspense } from 'react';
 export const viewport: Viewport = {
-  width: "device-width",
+  width: 'device-width',
   initialScale: 1,
-  themeColor: "#ffffff",
+  themeColor: '#ffffff',
 };
 
 const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
+  variable: '--font-inter',
+  subsets: ['latin'],
 });
 
 export const metadata: Metadata = {
-  title: "WebEntog | Object Storage Management",
-  description: "Object Storage Management on browser",
+  title: 'WebEntog | Object Storage Management',
+  description: 'Object Storage Management on browser',
 };
-
 
 export default function RootLayout({
   children,
@@ -41,19 +40,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${inter.variable} bg-white tracking-tight antialiased`}
-      >
-
+      <body className={`${inter.variable} bg-white tracking-tight antialiased`}>
         <ThemeProvider
           enableSystem={true}
           attribute="class"
           storageKey="theme"
           defaultTheme="light"
         >
-              <Suspense>
-                {children}
-              </Suspense>
+          <Suspense>{children}</Suspense>
         </ThemeProvider>
       </body>
     </html>

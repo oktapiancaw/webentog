@@ -12,10 +12,10 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"use server"
+'use server';
 
-import { FileType } from "@/components/app-browser";
-import { Operator } from "opendal"
+import { FileType } from '@/components/app-browser';
+import { Operator } from 'opendal';
 
 interface ConnectionConfig {
   endpoint: string;
@@ -27,7 +27,7 @@ interface ConnectionConfig {
 
 export async function listStorageFiles(config: ConnectionConfig, path: string) {
   try {
-    const op = new Operator("s3", {
+    const op = new Operator('s3', {
       endpoint: config.endpoint,
       access_key_id: config.accessKey,
       secret_access_key: config.secretKey,
@@ -38,59 +38,63 @@ export async function listStorageFiles(config: ConnectionConfig, path: string) {
     const entries = await op.list(path);
 
     const formattedFiles = entries.map((entry) => {
-
-      const pathString = entry.path()
-      let fileType: FileType = "unknown";
-      const metadata = entry.metadata()
-      const isFolder = metadata.isDirectory()
+      const pathString = entry.path();
+      let fileType: FileType = 'unknown';
+      const metadata = entry.metadata();
+      const isFolder = metadata.isDirectory();
       if (isFolder) {
-        fileType = "folder";
+        fileType = 'folder';
       } else {
         const pathArray = pathString.split('.');
-        
+
         if (pathArray.length > 1) {
           const extension = pathArray[pathArray.length - 1].toLowerCase();
 
           switch (extension) {
             // Image types
-            case "png":
-            case "jpg":
-            case "jpeg":
-            case "gif":
-            case "svg":
-            case "webp":
-              fileType = "image";
+            case 'png':
+            case 'jpg':
+            case 'jpeg':
+            case 'gif':
+            case 'svg':
+            case 'webp':
+              fileType = 'image';
               break;
-            
+
             // Document types
-            case "pdf":
-              fileType = "pdf";
+            case 'pdf':
+              fileType = 'pdf';
               break;
-            
+
             // Data types
-            case "json":
-              fileType = "json";
+            case 'json':
+              fileType = 'json';
               break;
-            
+
             // Video types
-            case "mp4":
-            case "mkv":
-            case "avi":
-            case "mov":
-            case "webm":
-              fileType = "video";
+            case 'mp4':
+            case 'mkv':
+            case 'avi':
+            case 'mov':
+            case 'webm':
+              fileType = 'video';
               break;
-            
+
             // Anything else stays "unknown"
             default:
-              fileType = "unknown";
+              fileType = 'unknown';
           }
         }
       }
-      const sizeFile = metadata.contentLength ? Math.round(Number(metadata.contentLength) / 1024) + "KB" : "--"      
+      const sizeFile = metadata.contentLength
+        ? Math.round(Number(metadata.contentLength) / 1024) + 'KB'
+        : '--';
       return {
         id: pathString,
-        name: pathString || pathString.split('/').filter(Boolean).pop() || "unknown",
+        name:
+          pathString ||
+          pathString.split('/').filter(Boolean).pop() ||
+          'unknown',
         type: fileType,
         size: sizeFile,
         lastModified: metadata.lastModified,
@@ -99,14 +103,14 @@ export async function listStorageFiles(config: ConnectionConfig, path: string) {
 
     return formattedFiles;
   } catch (error) {
-    console.error("OpenDAL Error:", error);
-    throw new Error("Failed to connect or list files.");
+    console.error('OpenDAL Error:', error);
+    throw new Error('Failed to connect or list files.');
   }
 }
 
 export async function getDownloadUrl(config: ConnectionConfig, path: string) {
   try {
-    const op = new Operator("s3", {
+    const op = new Operator('s3', {
       endpoint: config.endpoint,
       access_key_id: config.accessKey,
       secret_access_key: config.secretKey,
@@ -115,10 +119,10 @@ export async function getDownloadUrl(config: ConnectionConfig, path: string) {
     });
 
     const req = await op.presignRead(path, 3600);
-    
+
     return req.url;
   } catch (error) {
-    console.error("Presign URL Error:", error);
-    throw new Error("Failed to generate download link.");
+    console.error('Presign URL Error:', error);
+    throw new Error('Failed to generate download link.');
   }
 }

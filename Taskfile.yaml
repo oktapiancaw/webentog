@@ -1,0 +1,95 @@
+version: '3'
+
+vars:
+  # Updated variable name and message for package.json
+  COMMIT_PKG: 'docs: :bookmark: change package.json version to '
+  COMMIT_CHANGELOG: 'feat: :memo: Add changelog entry for '
+
+  IMAGE_NAME: 'webentog'
+  REGISTRY_URL: 'ghcr.io/oktapiancaw'
+
+tasks:
+  build:
+    desc: 'Build docker image'
+    vars:
+      # Default to 'latest' if no VERSION is provided
+      VERSION: '{{.VERSION | default "latest"}}'
+    cmds:
+      - echo "Building Docker image {{.IMAGE_NAME}}:{{.VERSION}}..."
+      - docker build -t {{.IMAGE_NAME}}:{{.VERSION}} .
+      - echo "Image {{.IMAGE_NAME}}:{{.VERSION}} built."
+
+  release:
+    desc: 'Create and push a new git release tag'
+    vars:
+      VERSION: '{{.VERSION}}'
+      TAG_MSG:
+        sh: git cliff --unreleased --tag {{.VERSION}} --strip header
+    preconditions:
+      - {
+          sh: "test -n '{{.VERSION}}'",
+          msg: 'VERSION is required. e.g., task release VERSION=1.2.3',
+        }
+    cmds:
+      - echo "Changing version in package.json to {{.VERSION}}..."
+      # Use npm to safely update package.json and package-lock.json without auto-tagging
+      - npm version {{.VERSION}} --no-git-tag-version
+      - git add package.json package-lock.json
+      - git commit -m "{{.COMMIT_PKG}}{{.VERSION}}"
+
+      - echo "Generating changelog for v{{.VERSION}}..."
+      - git cliff --tag {{.VERSION}} --output CHANGELOG.md
+      - git add CHANGELOG.md
+      - git commit -m "{{.COMMIT_CHANGELOG}}{{.VERSION}}"
+
+      - echo "Creating git tag v{{.VERSION}} with changelog message..."
+      - git tag -a "v{{.VERSION}}" -m "{{.TAG_MSG}}"
+
+      - echo "Pushing commits and tag to origin master..."
+      # If your default branch is 'main', change 'master' to 'main' below
+      - git push origin master
+      - git push origin v{{.VERSION}}
+      - echo "Release v{{.VERSION}} pushed."
+
+  publish:
+    desc: 'Build and publish docker image to registry'
+    vars:
+      VERSION: '{{.VERSION}}'
+    preconditions:
+      # A specific version is required to publish
+      - {
+          sh: "test -n '{{.VERSION}}'",
+          msg: 'VERSION is required. e.g., task publish VERSION=1.2.3',
+        }
+      - task: build
+        vars:
+          VERSION: '{{.VERSION}}'
+    cmds:
+      - echo "Tagging image for registry {{.REGISTRY_URL}}..."
+      - docker tag {{.IMAGE_NAME}}:{{.VERSION}} {{.REGISTRY_URL}}/{{.IMAGE_NAME}}:{{.VERSION}}
+      - docker tag {{.IMAGE_NAME}}:{{.VERSION}} {{.REGISTRY_URL}}/{{.IMAGE_NAME}}:latest
+
+      - echo "Pushing images to registry..."
+      - docker push {{.REGISTRY_URL}}/{{.IMAGE_NAME}}:{{.VERSION}}
+      - docker push {{.REGISTRY_URL}}/{{.IMAGE_NAME}}:latest
+      - echo "Images {{.REGISTRY_URL}}/{{.IMAGE_NAME}}:{{.VERSION}} and {{.REGISTRY_URL}}/{{.IMAGE_NAME}}:latest published."
+
+  publish-nobuild:
+    desc: 'Publish existing Docker image without rebuilding'
+    vars:
+      VERSION: '{{.VERSION}}'
+    preconditions:
+      # A specific version is required to publish
+      - {
+          sh: "test -n '{{.VERSION}}'",
+          msg: 'VERSION is required. e.g., task publish-nobuild VERSION=1.2.3',
+        }
+    cmds:
+      - echo "Tagging image for registry {{.REGISTRY_URL}}..."
+      - docker tag {{.IMAGE_NAME}}:{{.VERSION}} {{.REGISTRY_URL}}/{{.IMAGE_NAME}}:{{.VERSION}}
+      - docker tag {{.IMAGE_NAME}}:{{.VERSION}} {{.REGISTRY_URL}}/{{.IMAGE_NAME}}:latest
+
+      - echo "Pushing images to registry..."
+      - docker push {{.REGISTRY_URL}}/{{.IMAGE_NAME}}:{{.VERSION}}
+      - docker push {{.REGISTRY_URL}}/{{.IMAGE_NAME}}:latest
+      - echo "Images {{.REGISTRY_URL}}/{{.IMAGE_NAME}}:{{.VERSION}} and {{.REGISTRY_URL}}/{{.IMAGE_NAME}}:latest published."
