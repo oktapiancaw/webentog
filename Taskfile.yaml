@@ -45,9 +45,8 @@ tasks:
       - echo "Creating git tag v{{.VERSION}} with changelog message..."
       - git tag -a "v{{.VERSION}}" -m "{{.TAG_MSG}}"
 
-      - echo "Pushing commits and tag to origin master..."
-      # If your default branch is 'main', change 'master' to 'main' below
-      - git push origin master
+      - echo "Pushing commits and tag to origin development..."
+      - git push origin development
       - git push origin v{{.VERSION}}
       - echo "Release v{{.VERSION}} pushed."
 
