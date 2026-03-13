@@ -25,6 +25,10 @@ interface SearchBrowserProps {
 export function SearchBrowser({ onSearch }: SearchBrowserProps) {
   const [searchText, setSearchText] = useState('');
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') onSearch?.(searchText);
+  };
+
   return (
     <div className="flex space-x-2">
       <Input
@@ -32,6 +36,7 @@ export function SearchBrowser({ onSearch }: SearchBrowserProps) {
         value={searchText}
         className="w-full rounded-none font-mono text-sm"
         placeholder="Search your file.."
+        onKeyDown={handleKeyDown}
         onChange={(e) => setSearchText(e.target.value)}
       />
 

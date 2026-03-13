@@ -12,7 +12,6 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import React from 'react';
 
 export function WebEntogLogo({ className }: { className?: string }) {
   return (
@@ -27,7 +26,7 @@ export function WebEntogLogo({ className }: { className?: string }) {
         d="M12 68C12 55 22 54 22 54C22 35 42 30 50 40C58 30 78 35 78 54C78 54 88 55 88 68C88 78 78 82 70 82H30C22 82 12 78 12 68Z"
         fill="#0D9488"
       />
-      
+
       {/* Sturdy Muscovy Duck (Entog) Silhouette - Navy Blue */}
       <path
         d="M44 55C44 32 50 22 62 22L82 32L62 42C54 42 52 48 52 65H44V55Z"

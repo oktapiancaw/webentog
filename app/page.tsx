@@ -32,6 +32,7 @@ import {
   DrawerDescription,
 } from '@/components/ui/drawer';
 import { Loader2 } from 'lucide-react';
+import { JsonPreview } from '@/components/json-preview';
 
 function PageContent() {
   const [config, setConfig] = useState<ConnectionConfig | null>(null);
@@ -53,7 +54,7 @@ function PageContent() {
   const [viewingFile, setViewingFile] = useState<FileItem | null>(null);
   const [viewingUrl, setViewingUrl] = useState<string | null>(null);
   const [isViewingLoading, setIsViewingLoading] = useState(false);
-  const [fileContent, setFileContent] = useState<string | null>(null);
+  // const [fileContent, setFileContent] = useState<string | null>(null);
 
   useEffect(() => {
     if (!config) return;
@@ -156,16 +157,9 @@ function PageContent() {
     setViewingFile(file);
     setIsViewingLoading(true);
     setViewingUrl(null);
-    setFileContent(null);
     try {
       const url = await getDownloadUrl(config, file.id);
       setViewingUrl(url);
-
-      if (file.type === 'json' || file.type === 'unknown') {
-        const response = await fetch(url);
-        const text = await response.text();
-        setFileContent(text);
-      }
     } catch (error) {
       console.error('Failed to load preview:', error);
       toast.error('Failed to load preview');
@@ -284,9 +278,7 @@ function PageContent() {
                 )}
                 {(viewingFile?.type === 'json' ||
                   viewingFile?.type === 'unknown') && (
-                  <pre className="rounded-none bg-muted p-4 font-mono text-sm overflow-auto max-h-full">
-                    {fileContent}
-                  </pre>
+                  <JsonPreview presignedUrl={viewingUrl} />
                 )}
               </div>
             ) : (

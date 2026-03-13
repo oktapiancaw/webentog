@@ -174,7 +174,8 @@ export function SiteHeader({
               </div>
 
               {pathSegments.map((segment, index) => {
-                const href = '/' + pathSegments.slice(0, index + 1).join('/');
+                let href = '/' + pathSegments.slice(0, index + 1).join('/');
+                href = href.endsWith('/') ? href : href + '/';
                 const isLast = index === pathSegments.length - 1;
 
                 return (
@@ -248,7 +249,7 @@ export function SiteHeader({
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 rounded-none text-muted-foreground hover:text-foreground"
+            className=" h-8 w-8 rounded-none text-muted-foreground hover:text-foreground"
             onClick={handleLogout}
             title="Logout"
           >
@@ -258,7 +259,11 @@ export function SiteHeader({
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="rounded-none">
+              <Button
+                variant="outline"
+                size="icon"
+                className="rounded-none border-none"
+              >
                 <Sun className="h-[1.2rem] w-[1.2rem] scale-100 rotate-0 transition-all dark:scale-0 dark:-rotate-90" />
                 <Moon className="absolute h-[1.2rem] w-[1.2rem] scale-0 rotate-90 transition-all dark:scale-100 dark:rotate-0" />
                 <span className="sr-only">Toggle theme</span>
