@@ -99,6 +99,9 @@ function PageContent() {
   const paginatedFiles = useMemo(() => {
     if (pageSize === 'all') return filteredFiles;
     const startIndex = (currentPage - 1) * pageSize;
+    filteredFiles.sort(
+      (a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name)
+    );
     return filteredFiles.slice(startIndex, startIndex + pageSize);
   }, [filteredFiles, currentPage, pageSize]);
 
@@ -180,10 +183,18 @@ function PageContent() {
         } as React.CSSProperties
       }
     >
-      <AppSidebar variant="inset" onConnect={handleConnect} isLoading={isLoading} />
+      <AppSidebar
+        variant="inset"
+        onConnect={handleConnect}
+        isLoading={isLoading}
+      />
 
-      <SidebarInset>
-        <SiteHeader currentPath={currentPath} onNavigate={handleNavigate} bucket={config?.bucket} />
+      <SidebarInset className="rounded-none">
+        <SiteHeader
+          currentPath={currentPath}
+          onNavigate={handleNavigate}
+          bucket={config?.bucket}
+        />
         <div className="flex flex-1 flex-col">
           <div className="@container/main flex flex-1 flex-col gap-2">
             <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
@@ -227,7 +238,11 @@ function PageContent() {
         </div>
       </SidebarInset>
 
-      <Drawer open={!!viewingFile} onOpenChange={(open) => !open && setViewingFile(null)} direction="right">
+      <Drawer
+        open={!!viewingFile}
+        onOpenChange={(open) => !open && setViewingFile(null)}
+        direction="right"
+      >
         <DrawerContent className="h-full rounded-none">
           <DrawerHeader className="border-b">
             <DrawerTitle className="truncate">{viewingFile?.name}</DrawerTitle>
@@ -267,7 +282,8 @@ function PageContent() {
                     title={viewingFile.name}
                   />
                 )}
-                {(viewingFile?.type === 'json' || viewingFile?.type === 'unknown') && (
+                {(viewingFile?.type === 'json' ||
+                  viewingFile?.type === 'unknown') && (
                   <pre className="rounded-none bg-muted p-4 font-mono text-sm overflow-auto max-h-full">
                     {fileContent}
                   </pre>
