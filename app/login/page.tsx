@@ -21,6 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { loginAction, isPersistentMode } from '@/app/auth-action';
 import { toast } from 'sonner';
+import { WebEntogLogo } from '@/components/logo';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -67,13 +68,26 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 dark:bg-zinc-950 p-4">
-      <div className="w-full max-w-md space-y-8 rounded-xl border border-zinc-200 bg-white p-8 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="flex flex-col space-y-6 min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
+      <div className="p-6 w-full flex justify-center items-center gap-3">
+        <div className="size-12  flex items-center justify-center shrink-0">
+          <WebEntogLogo className="size-full" />
+        </div>
+        <div>
+          <h2 className="text-base font-black leading-tight uppercase tracking-wide">
+            WebEntog
+          </h2>
+          <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">
+            Storage Console
+          </p>
+        </div>
+      </div>
+      <div className="w-full max-w-md space-y-8 rounded-none border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="text-center">
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+          <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
             Welcome Back
           </h1>
-          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+          <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
             Please sign in to your account
           </p>
         </div>
