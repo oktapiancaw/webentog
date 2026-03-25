@@ -31,15 +31,11 @@ import {
 import {
   Settings,
   EyeOff,
-  ArrowRightToLine,
-  Database,
   Eye,
   Save,
-  Trash2,
   Plus,
   MoreVertical,
   Check,
-  Globe,
   HardDrive,
 } from 'lucide-react';
 
@@ -72,7 +68,7 @@ import {
   getConnections,
   deleteConnection,
   ConnectionConfig,
-} from '@/app/action';
+} from '@/app/actions/object-management';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { WebEntogLogo } from '@/components/logo';

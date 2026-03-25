@@ -19,9 +19,10 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { loginAction, isPersistentMode } from '@/app/auth-action';
 import { toast } from 'sonner';
 import { WebEntogLogo } from '@/components/logo';
+import { isPersistentMode } from '@/lib/session';
+import { loginAction } from '../actions/auth';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');

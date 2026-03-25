@@ -21,9 +21,8 @@ import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { ChevronRight, Copy, Check, PencilIcon, XIcon } from 'lucide-react'; // Optional: for path arrows
 import { Moon, Sun, LogOut } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { logoutAction } from '@/app/auth-action';
 import { useRouter } from 'next/navigation';
 import {
   DropdownMenu,
@@ -31,6 +30,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { logoutAction } from '@/app/actions/auth';
 
 interface SiteHeaderProps {
   onNavigate?: (folderName: string) => void;

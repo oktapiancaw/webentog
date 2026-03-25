@@ -17,10 +17,10 @@
 import { useState, useEffect, Suspense, useMemo } from 'react';
 import { StorageBrowser, FileItem } from '@/components/app-browser';
 import { AppSidebar } from '@/components/app-sidebar';
-import { ConnectionConfig } from '@/app/action';
+import { ConnectionConfig } from '@/app/actions/object-management';
 import { SiteHeader } from '@/components/site-header';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
-import { getDownloadUrl, listStorageFiles } from './action';
+import { getDownloadUrl, listStorageFiles } from './actions/object-management';
 import { SearchBrowser } from '@/components/search-browser';
 import { toast } from 'sonner';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';

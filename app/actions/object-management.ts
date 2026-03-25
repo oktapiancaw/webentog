@@ -35,7 +35,14 @@ export async function saveConnection(config: ConnectionConfig) {
       INSERT INTO connections (name, endpoint, accessKey, secretKey, bucket, region)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
-    const result = stmt.run(name || 'Unnamed Connection', endpoint, accessKey, secretKey, bucket, region);
+    const result = stmt.run(
+      name || 'Unnamed Connection',
+      endpoint,
+      accessKey,
+      secretKey,
+      bucket,
+      region
+    );
     return { id: result.lastInsertRowid };
   } catch (error) {
     console.error('Save Connection Error:', error);
@@ -45,7 +52,9 @@ export async function saveConnection(config: ConnectionConfig) {
 
 export async function getConnections(): Promise<ConnectionConfig[]> {
   try {
-    const stmt = db.prepare('SELECT * FROM connections ORDER BY created_at DESC');
+    const stmt = db.prepare(
+      'SELECT * FROM connections ORDER BY created_at DESC'
+    );
     return stmt.all() as ConnectionConfig[];
   } catch (error) {
     console.error('Get Connections Error:', error);
