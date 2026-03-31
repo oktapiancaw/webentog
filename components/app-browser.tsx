@@ -57,8 +57,8 @@ interface StorageBrowserProps {
   isLoading?: boolean;
   onNavigate?: (folderName: string) => void;
   onDownload?: (fileId: string, fileName: string) => void;
+  onDownloadFolder?: (path: string) => void;
   onView?: (file: FileItem) => void;
-  // Pagination props
   pageSize: number | 'all';
   currentPage: number;
   totalItems: number;
@@ -67,18 +67,30 @@ interface StorageBrowserProps {
 }
 
 const getFileIcon = (type: FileType) => {
-  const baseClass = "size-5 text-slate-700 dark:text-slate-400";
+  const baseClass = 'size-5 text-slate-700 dark:text-slate-400';
   switch (type) {
     case 'folder':
-      return <Folder className={`${baseClass} fill-slate-700/20 dark:fill-slate-400/20`} />;
+      return (
+        <Folder
+          className={`${baseClass} fill-slate-700/20 dark:fill-slate-400/20`}
+        />
+      );
     case 'image':
       return <ImageIcon className={baseClass} />;
     case 'pdf':
-      return <FileText className={`${baseClass} fill-slate-700/20 dark:fill-slate-400/20`} />;
+      return (
+        <FileText
+          className={`${baseClass} fill-slate-700/20 dark:fill-slate-400/20`}
+        />
+      );
     case 'json':
       return <FileJson className={baseClass} />;
     case 'video':
-      return <Film className={`${baseClass} fill-slate-700/20 dark:fill-slate-400/20`} />;
+      return (
+        <Film
+          className={`${baseClass} fill-slate-700/20 dark:fill-slate-400/20`}
+        />
+      );
     default:
       return <FileText className="size-5 text-muted-foreground" />;
   }
@@ -89,6 +101,7 @@ export function StorageBrowser({
   isLoading,
   onNavigate,
   onDownload,
+  onDownloadFolder,
   onView,
   pageSize,
   currentPage,
@@ -97,30 +110,32 @@ export function StorageBrowser({
   onPageSizeChange,
 }: StorageBrowserProps) {
   const totalPages = pageSize === 'all' ? 1 : Math.ceil(totalItems / pageSize);
-  
+
   const renderRows = () => {
     if (isLoading) {
-      return Array.from({ length: pageSize === 'all' ? 10 : pageSize }).map((_, i) => (
-        <tr key={`skeleton-${i}`} className="border-b last:border-0">
-          <td className="p-4 px-6">
-            <div className="flex items-center gap-3">
-              <Skeleton className="h-5 w-5 rounded-none" />
-              <Skeleton className="h-4 w-32 rounded-none" />
-            </div>
-          </td>
-          <td className="p-4 px-6">
-            <Skeleton className="h-4 w-12 rounded-none" />
-          </td>
-          <td className="p-4 px-6">
-            <Skeleton className="h-4 w-24 rounded-none" />
-          </td>
-          <td className="p-4 px-6 text-right">
-            <div className="flex justify-end">
-              <Skeleton className="h-8 w-8 rounded-none" />
-            </div>
-          </td>
-        </tr>
-      ));
+      return Array.from({ length: pageSize === 'all' ? 10 : pageSize }).map(
+        (_, i) => (
+          <tr key={`skeleton-${i}`} className="border-b last:border-0">
+            <td className="p-4 px-6">
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-5 w-5 rounded-none" />
+                <Skeleton className="h-4 w-32 rounded-none" />
+              </div>
+            </td>
+            <td className="p-4 px-6">
+              <Skeleton className="h-4 w-12 rounded-none" />
+            </td>
+            <td className="p-4 px-6">
+              <Skeleton className="h-4 w-24 rounded-none" />
+            </td>
+            <td className="p-4 px-6 text-right">
+              <div className="flex justify-end">
+                <Skeleton className="h-8 w-8 rounded-none" />
+              </div>
+            </td>
+          </tr>
+        )
+      );
     }
 
     if (files.length === 0) {
@@ -138,10 +153,17 @@ export function StorageBrowser({
         key={file.id}
         className="border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted last:border-0"
       >
-        <td className="p-4 px-6 align-middle">
+        <td
+          onClick={() =>
+            file.type === 'folder' ? onNavigate?.(file.id) : onView?.(file)
+          }
+          className="p-4 px-6 align-middle cursor-pointer"
+        >
           <div className="flex items-center gap-3 font-medium">
             {getFileIcon(file.type)}
-            <span className="truncate max-w-[200px] md:max-w-md" title={file.name}>{file.name}</span>
+            <span className="truncate max-w-50 md:max-w-md" title={file.name}>
+              {file.name}
+            </span>
           </div>
         </td>
         <td className="p-4 px-6 align-middle text-muted-foreground">
@@ -163,6 +185,17 @@ export function StorageBrowser({
               >
                 <Eye className="size-4" />
                 <span className="sr-only">View {file.name}</span>
+              </Button>
+            )}
+            {file.type === 'folder' && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-muted-foreground hover:text-foreground rounded-none"
+                onClick={() => onDownloadFolder?.(file.id)}
+              >
+                <Download className="size-4" />
+                <span className="sr-only">Download {file.name}</span>
               </Button>
             )}
             {file.type === 'folder' && (
@@ -226,7 +259,9 @@ export function StorageBrowser({
           </span>
           <Select
             value={String(pageSize)}
-            onValueChange={(v) => onPageSizeChange(v === 'all' ? 'all' : Number(v))}
+            onValueChange={(v) =>
+              onPageSizeChange(v === 'all' ? 'all' : Number(v))
+            }
           >
             <SelectTrigger className="h-8 w-[70px] rounded-none">
               <SelectValue placeholder={String(pageSize)} />

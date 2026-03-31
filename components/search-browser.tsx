@@ -17,7 +17,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { SearchIcon } from 'lucide-react';
+import { SearchIcon, UploadIcon } from 'lucide-react';
 
 interface SearchBrowserProps {
   onSearch?: (searchtext: string) => void;
@@ -41,12 +41,20 @@ export function SearchBrowser({ onSearch }: SearchBrowserProps) {
       />
 
       <Button
-        variant={'outline'}
+        variant={'default'}
         className="justify-center gap-2 rounded-none font-semibold uppercase tracking-wider text-xs"
         onClick={() => onSearch?.(searchText)}
       >
         Search
         <SearchIcon className="size-4" />
+      </Button>
+
+      <Button
+        variant={'secondary'}
+        className="justify-center gap-2 rounded-none font-semibold uppercase tracking-wider text-xs"
+      >
+        Upload
+        <UploadIcon className="size-4" />
       </Button>
     </div>
   );

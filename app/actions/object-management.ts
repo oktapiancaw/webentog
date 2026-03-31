@@ -17,6 +17,9 @@
 import { FileType } from '@/components/app-browser';
 import { Operator } from 'opendal';
 import db from '@/lib/db';
+import fs from 'node:fs';
+import path from 'node:path';
+import archiver from 'archiver';
 
 export interface ConnectionConfig {
   id?: number;
@@ -86,8 +89,12 @@ export async function listStorageFiles(config: ConnectionConfig, path: string) {
 
     const entries = await op.list(path);
 
-    const formattedFiles = entries.map((entry) => {
+    const formattedFiles = [];
+    for (const entry of entries) {
       const pathString = entry.path();
+      if (pathString === path) {
+        continue;
+      }
       let fileType: FileType = 'unknown';
       const metadata = entry.metadata();
       const isFolder = metadata.isDirectory();
@@ -139,14 +146,14 @@ export async function listStorageFiles(config: ConnectionConfig, path: string) {
         ? Math.round(Number(metadata.contentLength) / 1024) + 'KB'
         : '--';
       const name = pathString.split('/').filter(Boolean).pop() || 'unknown';
-      return {
+      formattedFiles.push({
         id: pathString,
         name: name,
         type: fileType,
         size: sizeFile,
         lastModified: metadata.lastModified,
-      };
-    });
+      });
+    }
 
     return formattedFiles;
   } catch (error) {
@@ -172,4 +179,64 @@ export async function getDownloadUrl(config: ConnectionConfig, path: string) {
     console.error('Presign URL Error:', error);
     throw new Error('Failed to generate download link.');
   }
+}
+export async function downloadFolderAsZip(
+  config: ConnectionConfig,
+  remotePath: string
+) {
+  const op = new Operator('s3', {
+    endpoint: config.endpoint,
+    access_key_id: config.accessKey,
+    secret_access_key: config.secretKey,
+    bucket: config.bucket,
+    region: config.region,
+  });
+
+  const zipFileName = `download-${Date.now()}.zip`;
+  const localOutputPath = path.resolve('./downloads', zipFileName);
+
+  // Ensure download directory exists
+  if (!fs.existsSync(path.dirname(localOutputPath))) {
+    fs.mkdirSync(path.dirname(localOutputPath), { recursive: true });
+  }
+
+  const output = fs.createWriteStream(localOutputPath);
+  const archive = archiver('zip', { zlib: { level: 9 } });
+
+  return new Promise((resolve, reject) => {
+    // Listen for all archive data to be written
+    output.on('close', () =>
+      resolve({ path: localOutputPath, size: archive.pointer() })
+    );
+    archive.on('error', (err) => reject(err));
+
+    // Pipe archive data to the file
+    archive.pipe(output);
+
+    (async () => {
+      try {
+        const lister = await op.list(remotePath);
+
+        for await (const entry of lister) {
+          const meta = await op.stat(entry.path());
+
+          if (meta.isFile()) {
+            // Get a reader stream from OpenDAL
+            const reader = await op.reader(entry.path());
+            const nodeStream = reader.createReadStream();
+
+            // Append the stream to the zip
+            // We use entry.path() as the name inside the zip
+            archive.append(nodeStream, { name: entry.path() });
+          }
+        }
+
+        // Finalize the ZIP (this tells the archiver we are done adding files)
+        await archive.finalize();
+      } catch (err) {
+        archive.destroy(err as Error);
+        reject(err);
+      }
+    })();
+  });
 }

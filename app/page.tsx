@@ -17,7 +17,10 @@
 import { useState, useEffect, Suspense, useMemo } from 'react';
 import { StorageBrowser, FileItem } from '@/components/app-browser';
 import { AppSidebar } from '@/components/app-sidebar';
-import { ConnectionConfig } from '@/app/actions/object-management';
+import {
+  ConnectionConfig,
+  downloadFolderAsZip,
+} from '@/app/actions/object-management';
 import { SiteHeader } from '@/components/site-header';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { getDownloadUrl, listStorageFiles } from './actions/object-management';
@@ -33,6 +36,7 @@ import {
 } from '@/components/ui/drawer';
 import { Loader2 } from 'lucide-react';
 import { JsonPreview } from '@/components/json-preview';
+import { getLastNameFromPath } from '@/lib/utils';
 
 function PageContent() {
   const [config, setConfig] = useState<ConnectionConfig | null>(null);
@@ -151,6 +155,45 @@ function PageContent() {
       toast.error('Failed to download file. Please check your connection.');
     }
   };
+  const handleDownloadFolder = async (path: string) => {
+    if (!config) return;
+
+    try {
+      toast.loading('Preparing your ZIP...', { id: 'zip-toast' });
+
+      const response = await fetch('/api/download-zip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config, folderPath: path }),
+      });
+
+      if (!response.ok) throw new Error('Network response was not ok');
+
+      // 1. Get the data as a Blob
+      const blob = await response.blob();
+
+      // 2. Create a temporary URL for the blob
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+
+      console.log(path);
+
+      // 3. Set filename and trigger click
+      a.download = `${getLastNameFromPath(path) || 'folder'}.zip`;
+      document.body.appendChild(a);
+      a.click();
+
+      // 4. Cleanup
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast.success('Download started!', { id: 'zip-toast' });
+    } catch (error) {
+      console.error('Failed to download folder:', error);
+      toast.error('Failed to download folder.', { id: 'zip-toast' });
+    }
+  };
 
   const handleView = async (file: FileItem) => {
     if (!config) return;
@@ -214,6 +257,7 @@ function PageContent() {
                       isLoading={isLoading}
                       onNavigate={handleNavigate}
                       onDownload={handleDownload}
+                      onDownloadFolder={handleDownloadFolder}
                       onView={handleView}
                       pageSize={pageSize}
                       currentPage={currentPage}
