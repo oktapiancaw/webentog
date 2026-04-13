@@ -18,8 +18,8 @@ import { FileType } from '@/components/app-browser';
 import { Operator } from 'opendal';
 import db from '@/lib/db';
 import fs from 'node:fs';
-import path from 'node:path';
 import archiver from 'archiver';
+import path from 'node:path';
 
 export interface ConnectionConfig {
   id?: number;
@@ -75,7 +75,46 @@ export async function deleteConnection(id: number) {
     throw new Error('Failed to delete connection.');
   }
 }
+export async function uploadFiles(
+  config: ConnectionConfig,
+  formData: FormData,
+  folderPath: string
+) {
+  const op = new Operator('s3', {
+    endpoint: config.endpoint,
+    access_key_id: config.accessKey,
+    secret_access_key: config.secretKey,
+    bucket: config.bucket,
+    region: config.region,
+    allow_http: 'true',
+  });
 
+  const files = formData.getAll('files') as File[];
+  if (!files.length) throw new Error('No files provided');
+
+  const results = [];
+  const folderPath_ = folderPath.endsWith('/') ? folderPath : folderPath + '/';
+
+  for (const file of files) {
+    // 10MB limit check
+    if (file.size > 10 * 1024 * 1024)
+      throw new Error(`${file.name} is too large`);
+
+    const buffer = Buffer.from(await file.arrayBuffer());
+    // Using a cleaner path structure
+    const path = `${folderPath_}${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
+
+    try {
+      await op.write(path, buffer);
+      results.push({ name: file.name, path, success: true });
+    } catch (error) {
+      console.error(`Failed to upload ${file.name}:`, error);
+      results.push({ name: file.name, success: false });
+    }
+  }
+
+  return { success: results.some((r) => r.success), uploads: results };
+}
 export async function listStorageFiles(config: ConnectionConfig, path: string) {
   try {
     const op = new Operator('s3', {
@@ -86,7 +125,6 @@ export async function listStorageFiles(config: ConnectionConfig, path: string) {
       region: config.region,
       allow_http: 'true',
     });
-
     const entries = await op.list(path);
 
     const formattedFiles = [];

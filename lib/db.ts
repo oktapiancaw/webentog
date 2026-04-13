@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 
-const dbPath = path.join(process.cwd(), 'connections.db');
+const dbPath = path.join(process.cwd(), './data/connections.db');
 const db = new Database(dbPath);
 
 // Create the connections table if it doesn't exist

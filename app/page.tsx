@@ -14,7 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 'use client';
 
-import { useState, useEffect, Suspense, useMemo } from 'react';
+import { useState, useEffect, Suspense, useMemo, useCallback } from 'react';
 import { StorageBrowser, FileItem } from '@/components/app-browser';
 import { AppSidebar } from '@/components/app-sidebar';
 import {
@@ -50,6 +50,8 @@ function PageContent() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
+  const [searchText, setSearchText] = useState('');
+
   // Pagination state
   const [pageSize, setPageSize] = useState<number | 'all'>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -60,39 +62,70 @@ function PageContent() {
   const [isViewingLoading, setIsViewingLoading] = useState(false);
   // const [fileContent, setFileContent] = useState<string | null>(null);
 
+  const fetchFiles = useCallback(async () => {
+    if (!config) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await listStorageFiles(config, currentPath);
+      const safeData: FileItem[] = data.map((item) => ({
+        id: item.id,
+        name: item.name,
+        type: item.type as FileItem['type'],
+        size:
+          item.size !== null && item.size !== undefined
+            ? String(item.size)
+            : '--',
+        lastModified: item.lastModified ? String(item.lastModified) : '--',
+      }));
+      setFiles(safeData);
+    } catch (err) {
+      setError(`Failed to load files. Check your connection settings. ${err}`);
+      setFiles([]);
+      toast.error('Failed to load files');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [config, currentPath]);
+
   useEffect(() => {
     if (!config) return;
-
-    async function fetchFiles() {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const data = await listStorageFiles(config!, currentPath);
-        const safeData: FileItem[] = data.map((item) => ({
-          id: item.id,
-          name: item.name,
-          type: item.type as FileItem['type'],
-          size:
-            item.size !== null && item.size !== undefined
-              ? String(item.size)
-              : '--',
-          lastModified: item.lastModified ? String(item.lastModified) : '--',
-        }));
-        setFiles(safeData);
-        setCurrentPage(1); // Reset to first page on path change
-      } catch (err) {
-        setError(
-          `Failed to load files. Check your connection settings. ${err}`
-        );
-        setFiles([]);
-        toast.error('Failed to load files');
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
     fetchFiles();
-  }, [config, currentPath]);
+  }, [fetchFiles]);
+
+  // useEffect(() => {
+  //   if (!config) return;
+
+  //   async function fetchFiles() {
+  //     setIsLoading(true);
+  //     setError(null);
+  //     try {
+  //       const data = await listStorageFiles(config!, currentPath);
+  //       const safeData: FileItem[] = data.map((item) => ({
+  //         id: item.id,
+  //         name: item.name,
+  //         type: item.type as FileItem['type'],
+  //         size:
+  //           item.size !== null && item.size !== undefined
+  //             ? String(item.size)
+  //             : '--',
+  //         lastModified: item.lastModified ? String(item.lastModified) : '--',
+  //       }));
+  //       setFiles(safeData);
+  //       setCurrentPage(1); // Reset to first page on path change
+  //     } catch (err) {
+  //       setError(
+  //         `Failed to load files. Check your connection settings. ${err}`
+  //       );
+  //       setFiles([]);
+  //       toast.error('Failed to load files');
+  //     } finally {
+  //       setIsLoading(false);
+  //     }
+  //   }
+
+  //   fetchFiles();
+  // }, [config, currentPath]);
 
   const filteredFiles = useMemo(() => {
     if (!searchQuery) return files;
@@ -112,7 +145,12 @@ function PageContent() {
 
   const handleSearch = (searchtext: string) => {
     setSearchQuery(searchtext);
-    setCurrentPage(1); // Reset to first page on search
+    setCurrentPage(1);
+  };
+  const handleRefresh = () => {
+    setSearchQuery('');
+    setCurrentPage(1);
+    fetchFiles(); // Manual call
   };
 
   const handleConnect = (newConfig: ConnectionConfig) => {
@@ -123,6 +161,8 @@ function PageContent() {
   };
 
   const handleNavigate = (path: string) => {
+    setSearchText('');
+
     const params = new URLSearchParams(searchParams);
     if (path === '/') {
       params.delete('path');
@@ -251,7 +291,14 @@ function PageContent() {
 
                 {config && !error && (
                   <div className=" gap-y-3 grid">
-                    <SearchBrowser onSearch={handleSearch} />
+                    <SearchBrowser
+                      searchText={searchText}
+                      setSearchText={setSearchText}
+                      onSearch={handleSearch}
+                      onRefresh={handleRefresh}
+                      currentPath={currentPath}
+                      config={config}
+                    />
                     <StorageBrowser
                       files={paginatedFiles}
                       isLoading={isLoading}
