@@ -164,7 +164,7 @@ export function SearchBrowser({
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogTrigger asChild>
           <Button
-            variant="secondary"
+            variant="outline"
             className="justify-center gap-2 rounded-none font-semibold uppercase tracking-wider text-xs"
           >
             Upload
@@ -174,8 +174,11 @@ export function SearchBrowser({
 
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Upload File</DialogTitle>
-            Upload file to this path {currentPath}
+            <DialogTitle>Upload Files</DialogTitle>
+            <span>
+              target path:
+              <span className="font-semibold italic"> {currentPath}</span>
+            </span>
           </DialogHeader>
 
           <p className="text-pretty mt-2 text-xs leading-5 text-muted-foreground sm:flex sm:items-center sm:justify-between">

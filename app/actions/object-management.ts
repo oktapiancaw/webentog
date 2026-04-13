@@ -184,9 +184,11 @@ export async function listStorageFiles(config: ConnectionConfig, path: string) {
         ? Math.round(Number(metadata.contentLength) / 1024) + 'KB'
         : '--';
       const name = pathString.split('/').filter(Boolean).pop() || 'unknown';
+      const fullPath = `${config.endpoint}/${config.bucket}/${pathString}`;
       formattedFiles.push({
         id: pathString,
         name: name,
+        fullPath: fullPath,
         type: fileType,
         size: sizeFile,
         lastModified: metadata.lastModified,

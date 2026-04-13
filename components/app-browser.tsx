@@ -25,6 +25,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  Share2Icon,
+  TrashIcon,
+  Ellipsis,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -35,6 +38,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu';
 
 export type FileType =
   | 'folder'
@@ -46,6 +57,7 @@ export type FileType =
 
 export interface FileItem {
   id: string;
+  fullPath: string;
   name: string;
   type: FileType;
   size: string;
@@ -173,54 +185,78 @@ export function StorageBrowser({
           {file.lastModified}
         </td>
         <td className="p-4 px-6 align-middle text-right">
-          <div className="flex justify-end gap-1">
-            {file.type !== 'folder' && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-muted-foreground hover:text-foreground rounded-none"
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={() => onView?.(file)}
-                title="View file"
-              >
-                <Eye className="size-4" />
-                <span className="sr-only">View {file.name}</span>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost">
+                <Ellipsis />
               </Button>
-            )}
-            {file.type === 'folder' && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-muted-foreground hover:text-foreground rounded-none"
-                onClick={() => onDownloadFolder?.(file.id)}
-              >
-                <Download className="size-4" />
-                <span className="sr-only">Download {file.name}</span>
-              </Button>
-            )}
-            {file.type === 'folder' && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-muted-foreground hover:text-foreground rounded-none"
-                onClick={() => onNavigate?.(file.id)}
-              >
-                <ArrowRight className="size-4" />
-                <span className="sr-only">Open {file.name}</span>
-              </Button>
-            )}
-            {file.type !== 'folder' && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-muted-foreground hover:text-foreground rounded-none"
-                onClick={() => onDownload?.(file.id, file.name)}
-              >
-                <Download className="size-4" />
-                <span className="sr-only">Download {file.name}</span>
-              </Button>
-            )}
-          </div>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuGroup>
+                {file.type !== 'folder' && (
+                  <>
+                    <DropdownMenuItem onClick={() => onView?.(file)}>
+                      <Eye />
+                      View
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        navigator.clipboard.writeText(file.fullPath)
+                      }
+                    >
+                      <Share2Icon />
+                      Copy
+                    </DropdownMenuItem>
+
+                    <DropdownMenuItem
+                      onClick={() => onDownload?.(file.id, file.name)}
+                    >
+                      <Download />
+                      Download
+                    </DropdownMenuItem>
+                  </>
+                )}
+
+                {file.type === 'folder' && (
+                  <>
+                    <DropdownMenuItem>
+                      <ArrowRight />
+                      Open
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        navigator.clipboard.writeText(file.fullPath)
+                      }
+                    >
+                      <Share2Icon />
+                      Copy
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuGroup>
+
+              {file.type !== 'folder' && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem variant="destructive">
+                      <TrashIcon />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuGroup>
+                </>
+              )}
+              {file.type === 'folder' && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => onDownloadFolder?.(file.id)}>
+                    <Download />
+                    Download (.zip)
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </td>
       </tr>
     ));
@@ -263,7 +299,7 @@ export function StorageBrowser({
               onPageSizeChange(v === 'all' ? 'all' : Number(v))
             }
           >
-            <SelectTrigger className="h-8 w-[70px] rounded-none">
+            <SelectTrigger className="h-8 w-17.5 rounded-none">
               <SelectValue placeholder={String(pageSize)} />
             </SelectTrigger>
             <SelectContent className="rounded-none">

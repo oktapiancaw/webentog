@@ -1,0 +1,12 @@
+services:
+  base:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: webentog-alpha-test
+    ports:
+      - 8024:3000
+    volumes:
+      - ./data:/app/data:rw
+    env_file:
+      - .env

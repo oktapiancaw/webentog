@@ -71,6 +71,7 @@ function PageContent() {
       const safeData: FileItem[] = data.map((item) => ({
         id: item.id,
         name: item.name,
+        fullPath: item.fullPath,
         type: item.type as FileItem['type'],
         size:
           item.size !== null && item.size !== undefined
@@ -92,40 +93,6 @@ function PageContent() {
     if (!config) return;
     fetchFiles();
   }, [fetchFiles]);
-
-  // useEffect(() => {
-  //   if (!config) return;
-
-  //   async function fetchFiles() {
-  //     setIsLoading(true);
-  //     setError(null);
-  //     try {
-  //       const data = await listStorageFiles(config!, currentPath);
-  //       const safeData: FileItem[] = data.map((item) => ({
-  //         id: item.id,
-  //         name: item.name,
-  //         type: item.type as FileItem['type'],
-  //         size:
-  //           item.size !== null && item.size !== undefined
-  //             ? String(item.size)
-  //             : '--',
-  //         lastModified: item.lastModified ? String(item.lastModified) : '--',
-  //       }));
-  //       setFiles(safeData);
-  //       setCurrentPage(1); // Reset to first page on path change
-  //     } catch (err) {
-  //       setError(
-  //         `Failed to load files. Check your connection settings. ${err}`
-  //       );
-  //       setFiles([]);
-  //       toast.error('Failed to load files');
-  //     } finally {
-  //       setIsLoading(false);
-  //     }
-  //   }
-
-  //   fetchFiles();
-  // }, [config, currentPath]);
 
   const filteredFiles = useMemo(() => {
     if (!searchQuery) return files;
