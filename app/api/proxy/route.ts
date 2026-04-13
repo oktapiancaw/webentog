@@ -19,14 +19,14 @@ export async function GET(request: Request) {
   const targetUrl = searchParams.get('url');
 
   if (!targetUrl) {
-    return NextResponse.json({ error: 'URL tidak ditemukan' }, { status: 400 });
+    return NextResponse.json({ error: 'URL not found' }, { status: 400 });
   }
 
   try {
     const response = await fetch(targetUrl);
 
     if (!response.ok) {
-      throw new Error('Gagal mengambil file dari storage');
+      throw new Error('Fail to get file from storage');
     }
 
     const textData = await response.text();
@@ -40,9 +40,6 @@ export async function GET(request: Request) {
       });
     }
   } catch (error) {
-    return NextResponse.json(
-      { error: 'Gagal memproses request' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Fail to request' }, { status: 500 });
   }
 }

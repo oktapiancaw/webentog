@@ -46,6 +46,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
+import { toast } from 'sonner';
 
 export type FileType =
   | 'folder'
@@ -122,7 +123,10 @@ export function StorageBrowser({
   onPageSizeChange,
 }: StorageBrowserProps) {
   const totalPages = pageSize === 'all' ? 1 : Math.ceil(totalItems / pageSize);
-
+  const copyPath = (path: string) => {
+    navigator.clipboard.writeText(path);
+    toast.success('Path copied');
+  };
   const renderRows = () => {
     if (isLoading) {
       return Array.from({ length: pageSize === 'all' ? 10 : pageSize }).map(
@@ -187,73 +191,50 @@ export function StorageBrowser({
         <td className="p-4 px-6 align-middle text-right">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost">
+              <Button variant="ghost" id={file.id}>
                 <Ellipsis />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
               <DropdownMenuGroup>
-                {file.type !== 'folder' && (
+                {file.type === 'folder' ? (
+                  <>
+                    <DropdownMenuItem onClick={() => onNavigate?.(file.id)}>
+                      <ArrowRight /> Open
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => copyPath(file.fullPath)}>
+                      <Share2Icon /> Copy
+                    </DropdownMenuItem>
+                  </>
+                ) : (
                   <>
                     <DropdownMenuItem onClick={() => onView?.(file)}>
-                      <Eye />
-                      View
+                      <Eye /> View
                     </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() =>
-                        navigator.clipboard.writeText(file.fullPath)
-                      }
-                    >
-                      <Share2Icon />
-                      Copy
+                    <DropdownMenuItem onClick={() => copyPath(file.fullPath)}>
+                      <Share2Icon /> Copy
                     </DropdownMenuItem>
-
                     <DropdownMenuItem
                       onClick={() => onDownload?.(file.id, file.name)}
                     >
-                      <Download />
-                      Download
-                    </DropdownMenuItem>
-                  </>
-                )}
-
-                {file.type === 'folder' && (
-                  <>
-                    <DropdownMenuItem>
-                      <ArrowRight />
-                      Open
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() =>
-                        navigator.clipboard.writeText(file.fullPath)
-                      }
-                    >
-                      <Share2Icon />
-                      Copy
+                      <Download /> Download
                     </DropdownMenuItem>
                   </>
                 )}
               </DropdownMenuGroup>
 
-              {file.type !== 'folder' && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuGroup>
-                    <DropdownMenuItem variant="destructive">
-                      <TrashIcon />
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuGroup>
-                </>
-              )}
-              {file.type === 'folder' && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => onDownloadFolder?.(file.id)}>
-                    <Download />
-                    Download (.zip)
-                  </DropdownMenuItem>
-                </>
+              <DropdownMenuSeparator />
+
+              {file.type === 'folder' ? (
+                <DropdownMenuItem
+                  onClick={() => onDownloadFolder?.(file.fullPath)}
+                >
+                  <Download /> Download (.zip)
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem variant="destructive">
+                  <TrashIcon /> Delete
+                </DropdownMenuItem>
               )}
             </DropdownMenuContent>
           </DropdownMenu>

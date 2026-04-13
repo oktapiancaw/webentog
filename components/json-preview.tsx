@@ -28,17 +28,14 @@ export function JsonPreview({ presignedUrl }: { presignedUrl: string }) {
     const fetchJson = async () => {
       try {
         setLoading(true);
-        // Panggil API Proxy kita, dan sisipkan presignedUrl di parameternya
-        // Jangan lupa di-encode agar URL S3 yang panjang tidak memutus string
         const response = await fetch(
           `/api/proxy?url=${encodeURIComponent(presignedUrl)}`
         );
 
-        if (!response.ok) throw new Error('Gagal memuat preview');
+        if (!response.ok) throw new Error('Fail to preview data');
 
         const jsonData = await response.json();
 
-        // Ubah JSON object menjadi string dengan indentasi 2 spasi agar rapi
         setData(JSON.stringify(jsonData, null, 2));
       } catch (err: any) {
         setError(err.message);
@@ -52,7 +49,9 @@ export function JsonPreview({ presignedUrl }: { presignedUrl: string }) {
 
   if (loading)
     return (
-      <div className="text-sm text-muted-foreground">Memuat isi file...</div>
+      <div className="text-sm text-muted-foreground">
+        loading file content...
+      </div>
     );
   if (error) return <div className="text-sm text-red-500">Error: {error}</div>;
 

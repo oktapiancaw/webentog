@@ -20,6 +20,7 @@ import db from '@/lib/db';
 import fs from 'node:fs';
 import archiver from 'archiver';
 import path from 'node:path';
+import { formatStorage } from '@/lib/utils';
 
 export interface ConnectionConfig {
   id?: number;
@@ -96,12 +97,10 @@ export async function uploadFiles(
   const folderPath_ = folderPath.endsWith('/') ? folderPath : folderPath + '/';
 
   for (const file of files) {
-    // 10MB limit check
     if (file.size > 10 * 1024 * 1024)
       throw new Error(`${file.name} is too large`);
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    // Using a cleaner path structure
     const path = `${folderPath_}${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
 
     try {
@@ -181,7 +180,7 @@ export async function listStorageFiles(config: ConnectionConfig, path: string) {
         }
       }
       const sizeFile = metadata.contentLength
-        ? Math.round(Number(metadata.contentLength) / 1024) + 'KB'
+        ? formatStorage(Number(metadata.contentLength))
         : '--';
       const name = pathString.split('/').filter(Boolean).pop() || 'unknown';
       const fullPath = `${config.endpoint}/${config.bucket}/${pathString}`;
@@ -194,7 +193,9 @@ export async function listStorageFiles(config: ConnectionConfig, path: string) {
         lastModified: metadata.lastModified,
       });
     }
-
+    formattedFiles.sort(
+      (a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name)
+    );
     return formattedFiles;
   } catch (error) {
     console.error('OpenDAL Error:', error);
@@ -235,7 +236,6 @@ export async function downloadFolderAsZip(
   const zipFileName = `download-${Date.now()}.zip`;
   const localOutputPath = path.resolve('./downloads', zipFileName);
 
-  // Ensure download directory exists
   if (!fs.existsSync(path.dirname(localOutputPath))) {
     fs.mkdirSync(path.dirname(localOutputPath), { recursive: true });
   }
@@ -244,13 +244,11 @@ export async function downloadFolderAsZip(
   const archive = archiver('zip', { zlib: { level: 9 } });
 
   return new Promise((resolve, reject) => {
-    // Listen for all archive data to be written
     output.on('close', () =>
       resolve({ path: localOutputPath, size: archive.pointer() })
     );
     archive.on('error', (err) => reject(err));
 
-    // Pipe archive data to the file
     archive.pipe(output);
 
     (async () => {
@@ -261,17 +259,13 @@ export async function downloadFolderAsZip(
           const meta = await op.stat(entry.path());
 
           if (meta.isFile()) {
-            // Get a reader stream from OpenDAL
             const reader = await op.reader(entry.path());
             const nodeStream = reader.createReadStream();
 
-            // Append the stream to the zip
-            // We use entry.path() as the name inside the zip
             archive.append(nodeStream, { name: entry.path() });
           }
         }
 
-        // Finalize the ZIP (this tells the archiver we are done adding files)
         await archive.finalize();
       } catch (err) {
         archive.destroy(err as Error);

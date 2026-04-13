@@ -17,10 +17,7 @@
 import { useState, useEffect, Suspense, useMemo, useCallback } from 'react';
 import { StorageBrowser, FileItem } from '@/components/app-browser';
 import { AppSidebar } from '@/components/app-sidebar';
-import {
-  ConnectionConfig,
-  downloadFolderAsZip,
-} from '@/app/actions/object-management';
+import { ConnectionConfig } from '@/app/actions/object-management';
 import { SiteHeader } from '@/components/site-header';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { getDownloadUrl, listStorageFiles } from './actions/object-management';
@@ -52,15 +49,12 @@ function PageContent() {
 
   const [searchText, setSearchText] = useState('');
 
-  // Pagination state
   const [pageSize, setPageSize] = useState<number | 'all'>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
 
-  // Viewing state
   const [viewingFile, setViewingFile] = useState<FileItem | null>(null);
   const [viewingUrl, setViewingUrl] = useState<string | null>(null);
   const [isViewingLoading, setIsViewingLoading] = useState(false);
-  // const [fileContent, setFileContent] = useState<string | null>(null);
 
   const fetchFiles = useCallback(async () => {
     if (!config) return;
@@ -104,9 +98,6 @@ function PageContent() {
   const paginatedFiles = useMemo(() => {
     if (pageSize === 'all') return filteredFiles;
     const startIndex = (currentPage - 1) * pageSize;
-    filteredFiles.sort(
-      (a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name)
-    );
     return filteredFiles.slice(startIndex, startIndex + pageSize);
   }, [filteredFiles, currentPage, pageSize]);
 

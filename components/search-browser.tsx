@@ -94,7 +94,6 @@ export function SearchBrowser({
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') onSearch?.(searchText);
   };
-  console.log('hey');
 
   const handleResetFiles = () => {
     setFiles([]);

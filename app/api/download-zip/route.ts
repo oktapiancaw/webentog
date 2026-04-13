@@ -1,3 +1,17 @@
+// Copyright (C) 2026 Oktapiancaw
+
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import { Operator } from 'opendal';
 import { Readable, PassThrough } from 'node:stream';
 import archiver from 'archiver';
@@ -24,7 +38,6 @@ export async function POST(req: Request) {
 
     archive.pipe(passthrough);
 
-    // Background process
     (async () => {
       try {
         if (listFiles) {
@@ -34,20 +47,15 @@ export async function POST(req: Request) {
             if (meta.isFile()) {
               const reader = await op.reader(path);
 
-              // Create a Node.js Readable stream by manually pulling from OpenDAL
               const fileStream = new Readable({
                 async read() {
                   try {
-                    // Allocate a 64KB buffer for the next chunk
                     const buf = Buffer.alloc(64 * 1024);
-                    // OpenDAL fills the buffer and returns how many bytes were actually read
                     const bytesRead = await reader.read(buf);
 
                     if (bytesRead > 0) {
-                      // Push only the portion of the buffer that was filled
                       this.push(buf.subarray(0, Number(bytesRead)));
                     } else {
-                      // bytesRead is 0, meaning End of File
                       this.push(null);
                     }
                   } catch (err) {
@@ -73,16 +81,12 @@ export async function POST(req: Request) {
               const fileStream = new Readable({
                 async read() {
                   try {
-                    // Allocate a 64KB buffer for the next chunk
                     const buf = Buffer.alloc(64 * 1024);
-                    // OpenDAL fills the buffer and returns how many bytes were actually read
                     const bytesRead = await reader.read(buf);
 
                     if (bytesRead > 0) {
-                      // Push only the portion of the buffer that was filled
                       this.push(buf.subarray(0, Number(bytesRead)));
                     } else {
-                      // bytesRead is 0, meaning End of File
                       this.push(null);
                     }
                   } catch (err) {
