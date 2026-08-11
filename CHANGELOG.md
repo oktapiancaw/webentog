@@ -1,3 +1,16 @@
+## [1.3.0] - 2026-08-11
+
+### 🚀 Features
+
+- [**breaking**] Redesign UI, add object versioning, pinned folders, cursor paging
+
+### 🐛 Bug Fixes
+
+- *(docker)* Move base image to node:22-trixie-slim
+
+### 📚 Documentation
+
+- :bookmark: change package.json version to 1.3.0
 ## [1.2.0] - 2026-04-13
 
 ### 🚀 Features
@@ -9,6 +22,7 @@
 - Folder Download Support
 - Refresh, Upload & Multi Upload handling
 - Syntax Highlight with shiki & Copy Json
+- :memo: Add changelog entry for 1.2.0
 
 ### 🐛 Bug Fixes
 
