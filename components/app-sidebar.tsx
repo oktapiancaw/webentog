@@ -15,7 +15,8 @@
 'use client';
 
 import * as React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   Sidebar,
   SidebarContent,
@@ -37,6 +38,8 @@ import {
   MoreVertical,
   Check,
   HardDrive,
+  Pin,
+  PinOff,
 } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
@@ -63,19 +66,24 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import type { ConnectionConfig } from '@/app/actions/object-management';
 import {
-  saveConnection,
-  getConnections,
-  deleteConnection,
-  ConnectionConfig,
-} from '@/app/actions/object-management';
+  loadConnections,
+  storeConnection,
+  removeConnection,
+} from '@/lib/storage-mode';
 import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
+import { cn, getLastNameFromPath } from '@/lib/utils';
 import { WebEntogLogo } from '@/components/logo';
+import type { ValidatedPinnedFolder } from '@/app/actions/pinned-folders';
 
 interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
-  onConnect?: (config: ConnectionConfig) => void;
+  onConnect?: (config: ConnectionConfig, keepPath?: boolean) => void;
   isLoading?: boolean;
+  bookmarkedFolders?: ValidatedPinnedFolder[];
+  isBookmarksLoading?: boolean;
+  onNavigateToBookmark?: (path: string) => void;
+  onRemoveBookmark?: (id: number) => void;
 }
 
 const INITIAL_FORM_STATE = {
@@ -90,6 +98,10 @@ const INITIAL_FORM_STATE = {
 export function AppSidebar({
   onConnect,
   isLoading,
+  bookmarkedFolders,
+  isBookmarksLoading,
+  onNavigateToBookmark,
+  onRemoveBookmark,
   ...props
 }: AppSidebarProps) {
   const [savedConnections, setSavedConnections] = useState<ConnectionConfig[]>(
@@ -105,14 +117,38 @@ export function AppSidebar({
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
-  useEffect(() => {
-    fetchConnections();
-  }, []);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const restoredRef = useRef(false);
 
   const fetchConnections = async () => {
-    const connections = await getConnections();
+    const connections = await loadConnections();
     setSavedConnections(connections);
+    return connections;
   };
+
+  // A reload wipes the in-memory config but leaves ?conn= and ?path= behind.
+  // Reconnect from ?conn= to keep the path valid. If it no longer resolves,
+  // drop the stale path rather than browse a bucket we lost.
+  useEffect(() => {
+    if (restoredRef.current) return;
+    restoredRef.current = true;
+
+    const connId = searchParams.get('conn');
+
+    fetchConnections().then((connections) => {
+      const match = connections.find((c) => String(c.id) === connId);
+      if (match) {
+        onConnect?.(match, true);
+        if (match.id) setActiveId(match.id);
+        toast.success(`Reconnected to ${match.bucket}`);
+        return;
+      }
+      if (connId || searchParams.get('path')) router.replace(pathname);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleConnect = (config: ConnectionConfig) => {
     if (onConnect) {
@@ -130,12 +166,12 @@ export function AppSidebar({
 
     setIsSaving(true);
     try {
-      await saveConnection(formData);
+      await storeConnection(formData);
       await fetchConnections();
       toast.success('Connection saved successfully.');
       setIsSheetOpen(false);
       setFormData(INITIAL_FORM_STATE);
-    } catch (error) {
+    } catch {
       toast.error('Failed to save connection.');
     } finally {
       setIsSaving(false);
@@ -144,12 +180,15 @@ export function AppSidebar({
 
   const handleDelete = async (id: number) => {
     try {
-      await deleteConnection(id);
+      await removeConnection(id);
       await fetchConnections();
       toast.success('Connection deleted.');
-      if (activeId === id) setActiveId(null);
+      if (activeId === id) {
+        setActiveId(null);
+        router.replace(pathname); // don't leave a dead ?conn= behind
+      }
       setConfirmDeleteId(null);
-    } catch (error) {
+    } catch {
       toast.error('Failed to delete connection.');
     }
   };
@@ -167,17 +206,17 @@ export function AppSidebar({
   return (
     <>
       <Sidebar collapsible="offcanvas" {...props}>
-        <SidebarHeader className="border-b h-(--header-height) flex items-center justify-center">
-          <div className="px-4 w-full flex items-center gap-3">
-            <div className="size-9 flex items-center justify-center shrink-0">
+        <SidebarHeader className="flex h-(--header-height) items-center justify-center border-b">
+          <div className="flex w-full items-center gap-3 px-4">
+            <div className="flex size-8 shrink-0 items-center justify-center">
               <WebEntogLogo className="size-full" />
             </div>
             <div>
-              <h2 className="text-sm font-black leading-tight uppercase tracking-tighter">
+              <h2 className="text-[15px] leading-tight text-strong">
                 WebEntog
               </h2>
-              <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                Storage Console
+              <p className="text-[11px] text-muted-foreground">
+                Storage console
               </p>
             </div>
           </div>
@@ -185,29 +224,27 @@ export function AppSidebar({
 
         <SidebarContent>
           <SidebarGroup>
-            <SidebarGroupLabel className="px-4 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground/70">
+            <SidebarGroupLabel className="px-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
               Connections
             </SidebarGroupLabel>
-            <SidebarMenu className="px-2 space-y-0.5">
+            <SidebarMenu className="space-y-0.5 px-2">
               {savedConnections.map((conn) => (
                 <SidebarMenuItem key={conn.id} className="group/item">
                   <SidebarMenuButton
                     onClick={() => handleConnect(conn)}
                     isActive={activeId === conn.id}
                     className={cn(
-                      'rounded-none h-11 border border-transparent transition-all',
-                      activeId === conn.id
-                        ? 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700'
-                        : 'hover:bg-slate-50 dark:hover:bg-slate-900'
+                      'h-11 border border-transparent transition-colors',
+                      activeId === conn.id && 'border-border bg-accent'
                     )}
                   >
-                    <div className="flex items-center gap-3 w-full overflow-hidden">
+                    <div className="flex w-full items-center gap-3 overflow-hidden">
                       <div
                         className={cn(
-                          'size-6 flex items-center justify-center shrink-0 rounded-none border',
+                          'flex size-6 shrink-0 items-center justify-center rounded-md border',
                           activeId === conn.id
-                            ? 'bg-slate-900 border-slate-900 text-white dark:bg-slate-400 dark:border-slate-50 dark:text-slate-900'
-                            : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-muted-foreground'
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'bg-muted text-muted-foreground'
                         )}
                       >
                         {activeId === conn.id ? (
@@ -217,10 +254,10 @@ export function AppSidebar({
                         )}
                       </div>
                       <div className="flex flex-col items-start overflow-hidden">
-                        <span className="text-xs font-bold truncate w-full uppercase tracking-wide">
+                        <span className="w-full truncate text-[13px] text-strong">
                           {conn.name}
                         </span>
-                        <span className="text-[9px] text-muted-foreground truncate w-full font-mono">
+                        <span className="w-full truncate font-mono text-[10px] text-muted-foreground">
                           {conn.bucket}
                         </span>
                       </div>
@@ -229,23 +266,17 @@ export function AppSidebar({
 
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <SidebarMenuAction className="rounded-none opacity-0 group-hover/item:opacity-100 transition-opacity">
+                      <SidebarMenuAction className="opacity-0 transition-opacity group-hover/item:opacity-100 data-[state=open]:opacity-100">
                         <MoreVertical className="size-3.5" />
                       </SidebarMenuAction>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent
-                      align="end"
-                      className="rounded-none w-40"
-                    >
-                      <DropdownMenuItem
-                        onClick={() => openEdit(conn)}
-                        className="rounded-none text-xs font-semibold uppercase tracking-wider"
-                      >
-                        Edit Config
+                    <DropdownMenuContent align="end" className="w-40">
+                      <DropdownMenuItem onClick={() => openEdit(conn)}>
+                        Edit config
                       </DropdownMenuItem>
                       <DropdownMenuItem
+                        variant="destructive"
                         onClick={() => conn.id && setConfirmDeleteId(conn.id)}
-                        className="rounded-none text-xs font-semibold uppercase tracking-wider text-red-600 focus:text-red-600"
                       >
                         Delete
                       </DropdownMenuItem>
@@ -254,20 +285,18 @@ export function AppSidebar({
 
                   {/* Inline Delete Confirmation Overlay */}
                   {confirmDeleteId === conn.id && (
-                    <div className="absolute inset-0 z-10 bg-red-600 text-white flex items-center justify-between px-3 animate-in fade-in duration-200">
-                      <span className="text-[10px] font-bold uppercase tracking-widest">
-                        Delete?
-                      </span>
+                    <div className="absolute inset-0 z-10 flex items-center justify-between rounded-md bg-destructive px-3 text-white duration-200 animate-in fade-in">
+                      <span className="text-xs">Delete connection?</span>
                       <div className="flex gap-2">
                         <button
                           onClick={() => setConfirmDeleteId(null)}
-                          className="text-[9px] font-bold uppercase hover:underline"
+                          className="text-[11px] hover:underline"
                         >
                           No
                         </button>
                         <button
                           onClick={() => handleDelete(conn.id!)}
-                          className="text-[9px] font-bold bg-white text-red-600 px-2 py-0.5 uppercase"
+                          className="rounded-sm bg-white px-2 py-0.5 text-[11px] font-medium text-destructive"
                         >
                           Yes
                         </button>
@@ -282,35 +311,84 @@ export function AppSidebar({
                   onClick={openCreateNew}
                   onPointerDown={(e) => e.preventDefault()}
                   variant="outline"
-                  className="w-full h-10 border-dashed rounded-none border-slate-300 dark:border-slate-700 hover:border-slate-900 dark:hover:border-slate-100 hover:bg-transparent text-xs font-bold uppercase tracking-widest transition-all"
+                  className="h-10 w-full border-dashed text-[13px] text-muted-foreground hover:text-foreground"
                 >
-                  <Plus className="size-3.5 mr-2" />
-                  New Connection
+                  <Plus className="size-3.5" />
+                  New connection
                 </Button>
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroup>
+
+          {activeId && (
+            <SidebarGroup>
+              <SidebarGroupLabel className="px-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                Pinned folders
+              </SidebarGroupLabel>
+              <SidebarMenu className="space-y-0.5 px-2">
+                {isBookmarksLoading && (
+                  <p className="px-2 py-1 text-xs text-muted-foreground">
+                    Loading…
+                  </p>
+                )}
+
+                {!isBookmarksLoading && bookmarkedFolders?.length === 0 && (
+                  <p className="px-2 py-1 text-xs text-muted-foreground">
+                    No pinned folders yet.
+                  </p>
+                )}
+
+                {bookmarkedFolders?.map((pin) => (
+                  <SidebarMenuItem key={pin.id} className="group/item">
+                    <SidebarMenuButton
+                      onClick={() =>
+                        pin.exists && onNavigateToBookmark?.(pin.path)
+                      }
+                      disabled={!pin.exists}
+                      className={cn(!pin.exists && 'opacity-50')}
+                      title={pin.path}
+                    >
+                      <Pin className="size-3.5 shrink-0" />
+                      <span className="truncate text-[13px]">
+                        {getLastNameFromPath(pin.path) || pin.path}
+                      </span>
+                      {/* Never auto-removed: a false exists() can also mean a
+                          network blip or a scoped-down credential. */}
+                      {!pin.exists && (
+                        <span className="ml-auto shrink-0 text-[10px] text-destructive">
+                          missing
+                        </span>
+                      )}
+                    </SidebarMenuButton>
+                    <SidebarMenuAction
+                      onClick={() => onRemoveBookmark?.(pin.id)}
+                      className="opacity-0 transition-opacity group-hover/item:opacity-100 focus-visible:opacity-100"
+                      title={pin.exists ? 'Unpin' : 'Remove pin'}
+                    >
+                      <PinOff className="size-3.5" />
+                    </SidebarMenuAction>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroup>
+          )}
         </SidebarContent>
 
-        <SidebarFooter className="p-4 border-t bg-slate-50/50 dark:bg-slate-900/50">
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">
-                Session Status
+        <SidebarFooter className="border-t p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              Session
+            </span>
+            <div className="flex items-center gap-1.5">
+              <div
+                className={cn(
+                  'size-1.5 rounded-full',
+                  activeId ? 'animate-pulse bg-pulse-green' : 'bg-smoke'
+                )}
+              />
+              <span className="font-mono text-[11px] text-muted-foreground">
+                {activeId ? 'connected' : 'idle'}
               </span>
-              <div className="flex items-center gap-1.5">
-                <div
-                  className={cn(
-                    'size-1.5 rounded-full',
-                    activeId
-                      ? 'bg-emerald-500 animate-pulse'
-                      : 'bg-slate-300 dark:bg-slate-700'
-                  )}
-                />
-                <span className="text-[9px] font-bold uppercase tracking-wider">
-                  {activeId ? 'Active' : 'Idle'}
-                </span>
-              </div>
             </div>
           </div>
         </SidebarFooter>
@@ -320,25 +398,25 @@ export function AppSidebar({
       <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
         <SheetContent
           side="left"
-          className="rounded-none border-r w-(--sidebar-width) sm:max-w-(--sidebar-width) p-0 flex flex-col"
+          className="flex w-(--sidebar-width) flex-col border-r p-0 sm:max-w-(--sidebar-width)"
         >
-          <SheetHeader className="p-6 border-b bg-slate-50 dark:bg-slate-900/50">
-            <div className="flex items-center gap-2 mb-2">
-              <Settings className="size-4 text-slate-900 dark:text-slate-100" />
-              <SheetTitle className="text-sm font-black uppercase tracking-widest">
-                {formData.id ? 'Edit Connection' : 'Create Connection'}
+          <SheetHeader className="border-b bg-muted/40 p-6">
+            <div className="mb-1 flex items-center gap-2">
+              <Settings className="size-4 text-muted-foreground" />
+              <SheetTitle className="text-[15px] text-strong">
+                {formData.id ? 'Edit connection' : 'New connection'}
               </SheetTitle>
             </div>
-            <SheetDescription className="text-[11px] font-medium leading-relaxed uppercase tracking-tight">
-              Configure your S3-compatible object storage parameters. These
-              settings are stored locally.
+            <SheetDescription className="text-[13px] leading-relaxed">
+              S3-compatible object storage parameters. Stored locally on this
+              machine.
             </SheetDescription>
           </SheetHeader>
 
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
             <div className="grid gap-2.5">
-              <Label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/80">
-                Connection Name <span className="text-red-500">*</span>
+              <Label className="text-[11px] font-medium text-muted-foreground">
+                Connection Name <span className="text-destructive">*</span>
               </Label>
               <Input
                 value={formData.name}
@@ -346,13 +424,13 @@ export function AppSidebar({
                   setFormData({ ...formData, name: e.target.value })
                 }
                 placeholder="E.g. Production AWS"
-                className="rounded-none font-mono text-sm h-10"
+                className="h-10 font-mono text-sm"
               />
             </div>
 
             <div className="grid gap-2.5">
-              <Label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/80">
-                Endpoint URL <span className="text-red-500">*</span>
+              <Label className="text-[11px] font-medium text-muted-foreground">
+                Endpoint URL <span className="text-destructive">*</span>
               </Label>
               <Input
                 value={formData.endpoint}
@@ -360,13 +438,13 @@ export function AppSidebar({
                   setFormData({ ...formData, endpoint: e.target.value })
                 }
                 placeholder="https://s3.amazonaws.com"
-                className="rounded-none font-mono text-sm h-10"
+                className="h-10 font-mono text-sm"
               />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2.5">
-                <Label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/80">
+                <Label className="text-[11px] font-medium text-muted-foreground">
                   Access Key
                 </Label>
                 <Input
@@ -374,21 +452,21 @@ export function AppSidebar({
                   onChange={(e) =>
                     setFormData({ ...formData, accessKey: e.target.value })
                   }
-                  className="rounded-none font-mono text-sm h-10"
+                  className="h-10 font-mono text-sm"
                 />
               </div>
               <div className="grid gap-2.5">
-                <Label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/80">
+                <Label className="text-[11px] font-medium text-muted-foreground">
                   Region
                 </Label>
                 <Select
                   value={formData.region}
                   onValueChange={(v) => setFormData({ ...formData, region: v })}
                 >
-                  <SelectTrigger className="rounded-none font-mono text-sm h-10">
+                  <SelectTrigger className="h-10 font-mono text-sm">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="rounded-none">
+                  <SelectContent>
                     <SelectItem value="us-east-1">us-east-1</SelectItem>
                     <SelectItem value="eu-west-1">eu-west-1</SelectItem>
                     <SelectItem value="ap-southeast-1">
@@ -400,7 +478,7 @@ export function AppSidebar({
             </div>
 
             <div className="grid gap-2.5">
-              <Label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/80">
+              <Label className="text-[11px] font-medium text-muted-foreground">
                 Secret Key
               </Label>
               <div className="relative">
@@ -411,7 +489,7 @@ export function AppSidebar({
                     setFormData({ ...formData, secretKey: e.target.value })
                   }
                   placeholder="••••••••••••••••"
-                  className="pr-10 rounded-none font-mono text-sm h-10"
+                  className="h-10 pr-10 font-mono text-sm"
                 />
                 <Button
                   variant="ghost"
@@ -429,35 +507,31 @@ export function AppSidebar({
             </div>
 
             <div className="grid gap-2.5">
-              <Label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/80">
-                Bucket Name <span className="text-red-500">*</span>
+              <Label className="text-[11px] font-medium text-muted-foreground">
+                Bucket Name <span className="text-destructive">*</span>
               </Label>
               <Input
                 value={formData.bucket}
                 onChange={(e) =>
                   setFormData({ ...formData, bucket: e.target.value })
                 }
-                className="rounded-none font-mono text-sm h-10"
+                className="h-10 font-mono text-sm"
               />
             </div>
           </div>
 
-          <SheetFooter className="p-6 border-t bg-slate-50 dark:bg-slate-900/50">
-            <div className="grid grid-cols-2 gap-3 w-full">
+          <SheetFooter className="border-t bg-muted/40 p-6">
+            <div className="grid w-full grid-cols-2 gap-3">
               <Button
                 variant="outline"
-                className="rounded-none uppercase text-[10px] font-black tracking-[0.2em] h-11"
+                className="h-10"
                 onClick={() => setIsSheetOpen(false)}
               >
                 Cancel
               </Button>
-              <Button
-                loading={isSaving}
-                className="rounded-none bg-slate-900 dark:bg-slate-100 dark:text-slate-900 uppercase text-[10px] font-black tracking-[0.2em] h-11"
-                onClick={handleSave}
-              >
-                {!isSaving && <Save className="size-4 mr-2" />}
-                Save Config
+              <Button loading={isSaving} className="h-10" onClick={handleSave}>
+                {!isSaving && <Save className="size-4" />}
+                Save config
               </Button>
             </div>
           </SheetFooter>

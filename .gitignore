@@ -42,3 +42,6 @@ next-env.d.ts
 
 # database
 *.db
+
+# local AI planning notes, not app code
+/AI_SETUP

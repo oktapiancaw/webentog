@@ -13,8 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import { Operator } from 'opendal';
-import { Readable, PassThrough } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import archiver from 'archiver';
+import { appendPathToArchive } from './stream';
 
 export async function POST(req: Request) {
   try {
@@ -38,66 +39,19 @@ export async function POST(req: Request) {
 
     archive.pipe(passthrough);
 
+    // Not awaited: the archive streams into the response while it is built.
     (async () => {
       try {
-        if (listFiles) {
-          for (const path of listFiles) {
-            const meta = await op.stat(path);
-
-            if (meta.isFile()) {
-              const reader = await op.reader(path);
-
-              const fileStream = new Readable({
-                async read() {
-                  try {
-                    const buf = Buffer.alloc(64 * 1024);
-                    const bytesRead = await reader.read(buf);
-
-                    if (bytesRead > 0) {
-                      this.push(buf.subarray(0, Number(bytesRead)));
-                    } else {
-                      this.push(null);
-                    }
-                  } catch (err) {
-                    this.destroy(err as Error);
-                  }
-                },
-              });
-
-              archive.append(fileStream, { name: path });
-            }
+        // Explicit selection wins; otherwise zip everything under the folder.
+        const paths: string[] = listFiles ?? [];
+        if (!listFiles) {
+          for await (const entry of await op.list(folderPath)) {
+            paths.push(entry.path());
           }
-        } else {
-          const lister = await op.list(folderPath);
+        }
 
-          for await (const entry of lister) {
-            const path = entry.path();
-            const meta = await op.stat(path);
-
-            if (meta.isFile()) {
-              const reader = await op.reader(path);
-
-              // Create a Node.js Readable stream by manually pulling from OpenDAL
-              const fileStream = new Readable({
-                async read() {
-                  try {
-                    const buf = Buffer.alloc(64 * 1024);
-                    const bytesRead = await reader.read(buf);
-
-                    if (bytesRead > 0) {
-                      this.push(buf.subarray(0, Number(bytesRead)));
-                    } else {
-                      this.push(null);
-                    }
-                  } catch (err) {
-                    this.destroy(err as Error);
-                  }
-                },
-              });
-
-              archive.append(fileStream, { name: path });
-            }
-          }
+        for (const path of paths) {
+          await appendPathToArchive(op, archive, path);
         }
 
         await archive.finalize();
@@ -107,13 +61,14 @@ export async function POST(req: Request) {
       }
     })();
 
-    return new Response(passthrough as any, {
+    return new Response(Readable.toWeb(passthrough) as ReadableStream, {
       headers: {
         'Content-Type': 'application/zip',
         'Content-Disposition': `attachment; filename="download.zip"`,
       },
     });
   } catch (error) {
+    console.error('Download Zip Error:', error);
     return new Response(JSON.stringify({ error: 'Download failed' }), {
       status: 500,
     });

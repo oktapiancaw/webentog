@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button';
 import { useTheme } from 'next-themes';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
-import { ChevronRight, Copy, Check, PencilIcon, XIcon } from 'lucide-react'; // Optional: for path arrows
+import { ChevronRight, Copy, Check, PencilIcon, XIcon } from 'lucide-react';
 import { Moon, Sun, LogOut } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -34,7 +34,6 @@ import { logoutAction } from '@/app/actions/auth';
 
 interface SiteHeaderProps {
   onNavigate?: (folderName: string) => void;
-  setCurrentPath?: (path: String) => void;
   currentPath: string;
   bucket?: string;
 }
@@ -47,19 +46,19 @@ export function SiteHeader({
   const { setTheme } = useTheme();
   const [copied, setCopied] = useState(false);
   const router = useRouter();
-  // State untuk mengatur mode edit dan nilai input
+  // Edit mode and its input value.
   const [isEditing, setIsEditing] = useState(false);
   const [manualPath, setManualPath] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Split the path into an array: ["home", "documents", "projects"]
+  // "home/documents/projects" -> ["home", "documents", "projects"]
   const pathSegments = currentPath.split('/').filter(Boolean);
 
   const handleEditClick = () => {
-    setManualPath(pathSegments.join('/')); // Set nilai awal saat diklik
-    setIsEditing(true); // Ubah mode ke input
+    setManualPath(pathSegments.join('/'));
+    setIsEditing(true);
 
-    // Memberikan sedikit waktu (delay) agar elemen input selesai di-render sebelum difokuskan
+    // Wait for the input to render before focusing it.
     setTimeout(() => {
       inputRef.current?.focus();
     }, 0);
@@ -109,67 +108,64 @@ export function SiteHeader({
   };
 
   return (
-    <header className="flex  h-(--header-height) shrink-0 items-center gap-2 border-b transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">
+    <header className="flex h-(--header-height) shrink-0 items-center gap-2 border-b bg-card transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-(--header-height)">
       <div className="flex w-full items-center gap-1 px-4 lg:gap-2 lg:px-6">
-        <SidebarTrigger className="-ml-1 rounded-none" />
+        <SidebarTrigger className="-ml-1" />
         <Separator
           orientation="vertical"
           className="mx-2 data-[orientation=vertical]:h-4"
         />
 
-        {/* Breadcrumb Path as Buttons */}
         <div className="flex items-center w-full">
           {isEditing ? (
-            // --- MODE INPUT MANUAL ---
-            <div className="flex items-center gap-2 w-full max-w-md">
-              <span className="text-muted-foreground font-medium">/</span>
+            // Manual path entry
+            <div className="flex w-full max-w-md items-center gap-2">
+              <span className="font-mono text-muted-foreground">/</span>
               <input
                 ref={inputRef}
                 type="text"
-                className="flex-1 h-8 px-2 text-sm border rounded-md bg-transparent text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                className="h-8 flex-1 rounded-md border bg-muted/40 px-2 font-mono text-[13px] text-foreground focus:border-ring focus:outline-none"
                 value={manualPath}
-                onChange={(e) => setManualPath(e.target.value)} // Sekarang ketikan tidak akan ter-reset
+                onChange={(e) => setManualPath(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ketik path folder..."
+                placeholder="Type a folder path…"
               />
               <Button
                 variant="ghost"
-                size="sm"
-                className="h-8 w-8 p-0"
+                size="icon-sm"
                 onClick={handleSave}
+                title="Go"
               >
-                <Check className="h-4 w-4 text-green-600 dark:text-green-500" />
+                <Check className="size-4 text-pulse-green" />
               </Button>
               <Button
                 variant="ghost"
-                size="sm"
-                className="h-8 w-8 p-0"
+                size="icon-sm"
                 onClick={() => setIsEditing(false)}
+                title="Cancel"
               >
-                <XIcon className="h-4 w-4 text-red-600 dark:text-red-500" />
+                <XIcon className="size-4 text-destructive" />
               </Button>
             </div>
           ) : (
-            // --- MODE BREADCRUMB NORMAL ---
-            <nav className="flex items-center gap-1 overflow-hidden group">
-              {/* ... (Kode bagian Home dan map pathSegments tetap sama persis seperti sebelumnya) ... */}
-
-              <div key="home" className="flex items-center gap-1">
+            // Breadcrumb
+            <nav className="group flex items-center gap-0.5 overflow-hidden">
+              <div key="home" className="flex items-center gap-0.5">
                 <Button
                   variant="ghost"
                   size="sm"
-                  className={`h-8 px-2 capitalize rounded-none ${
+                  className={`h-7 px-2 font-mono text-[13px] ${
                     pathSegments.length > 0
-                      ? 'font-medium text-foreground'
-                      : 'font-base text-muted-foreground'
+                      ? 'text-muted-foreground'
+                      : 'text-strong'
                   }`}
                   asChild
                   onClick={() => onNavigate?.('/')}
                 >
-                  <span className="hover:cursor-pointer">Home</span>
+                  <span className="cursor-pointer">{bucket || 'Home'}</span>
                 </Button>
                 {pathSegments.length > 0 && (
-                  <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                  <ChevronRight className="size-3.5 text-muted-foreground/50" />
                 )}
               </div>
 
@@ -179,36 +175,33 @@ export function SiteHeader({
                 const isLast = index === pathSegments.length - 1;
 
                 return (
-                  <div key={href} className="flex items-center gap-1">
+                  <div key={href} className="flex items-center gap-0.5">
                     <Button
                       variant="ghost"
                       size="sm"
-                      className={`h-8 px-2 capitalize rounded-none ${
-                        isLast
-                          ? 'font-medium text-foreground'
-                          : 'font-base text-muted-foreground'
+                      className={`h-7 px-2 font-mono text-[13px] ${
+                        isLast ? 'text-strong' : 'text-muted-foreground'
                       }`}
                       asChild
                       onClick={() => onNavigate?.(href)}
                     >
-                      <span className="hover:cursor-pointer">{segment}</span>
+                      <span className="cursor-pointer">{segment}</span>
                     </Button>
                     {!isLast && (
-                      <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
+                      <ChevronRight className="size-3.5 text-muted-foreground/50" />
                     )}
                   </div>
                 );
               })}
 
-              {/* Tombol Edit sekarang menggunakan handleEditClick */}
               <Button
                 variant="ghost"
-                size="sm"
-                className="h-8 w-8 p-0 ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                size="icon-xs"
+                className="ml-1 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                 onClick={handleEditClick}
-                title="Edit path secara manual"
+                title="Edit path"
               >
-                <PencilIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                <PencilIcon className="text-muted-foreground" />
               </Button>
             </nav>
           )}
@@ -216,31 +209,30 @@ export function SiteHeader({
 
         <Button
           variant="ghost"
-          size="icon"
-          className="h-8 w-8 rounded-none ml-1 text-muted-foreground hover:text-foreground"
+          size="icon-sm"
+          className="ml-1 text-muted-foreground hover:text-foreground"
           onClick={handleCopyPath}
           title="Copy path"
         >
           {copied ? (
-            <Check className="h-4 w-4 text-green-500" />
+            <Check className="size-4 text-pulse-green" />
           ) : (
-            <Copy className="h-4 w-4" />
+            <Copy className="size-4" />
           )}
           <span className="sr-only">Copy path</span>
         </Button>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-1">
           <Button
             variant="ghost"
             asChild
             size="sm"
-            className="hidden sm:flex rounded-none"
+            className="hidden text-muted-foreground hover:text-foreground sm:flex"
           >
             <a
               href="https://github.com/oktapiancaw/webentog"
               rel="noopener noreferrer"
               target="_blank"
-              className="dark:text-foreground"
             >
               GitHub
             </a>
@@ -248,44 +240,35 @@ export function SiteHeader({
 
           <Button
             variant="ghost"
-            size="icon"
-            className=" h-8 w-8 rounded-none text-muted-foreground hover:text-foreground"
+            size="icon-sm"
+            className="text-muted-foreground hover:text-foreground"
             onClick={handleLogout}
             title="Logout"
           >
-            <LogOut className="h-4 w-4" />
+            <LogOut className="size-4" />
             <span className="sr-only">Logout</span>
           </Button>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
-                variant="outline"
-                size="icon"
-                className="rounded-none border-none"
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground hover:text-foreground"
               >
-                <Sun className="h-[1.2rem] w-[1.2rem] scale-100 rotate-0 transition-all dark:scale-0 dark:-rotate-90" />
-                <Moon className="absolute h-[1.2rem] w-[1.2rem] scale-0 rotate-90 transition-all dark:scale-100 dark:rotate-0" />
+                <Sun className="size-4 scale-100 rotate-0 transition-all dark:scale-0 dark:-rotate-90" />
+                <Moon className="absolute size-4 scale-0 rotate-90 transition-all dark:scale-100 dark:rotate-0" />
                 <span className="sr-only">Toggle theme</span>
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="rounded-none">
-              <DropdownMenuItem
-                onClick={() => setTheme('light')}
-                className="rounded-none"
-              >
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setTheme('light')}>
                 Light
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setTheme('dark')}
-                className="rounded-none"
-              >
+              <DropdownMenuItem onClick={() => setTheme('dark')}>
                 Dark
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setTheme('system')}
-                className="rounded-none"
-              >
+              <DropdownMenuItem onClick={() => setTheme('system')}>
                 System
               </DropdownMenuItem>
             </DropdownMenuContent>

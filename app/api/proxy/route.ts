@@ -39,7 +39,7 @@ export async function GET(request: Request) {
         headers: { 'Content-Type': 'text/plain' },
       });
     }
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: 'Fail to request' }, { status: 500 });
   }
 }

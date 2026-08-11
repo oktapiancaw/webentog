@@ -4,10 +4,6 @@ const SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || 'secret-change-me'
 );
 
-export async function isPersistentMode() {
-  return process.env.PERSISTENT_CONNECTION !== 'false';
-}
-
 export async function encrypt(payload: any) {
   return await new SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256' })

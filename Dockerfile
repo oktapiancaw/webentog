@@ -40,12 +40,6 @@ FROM base AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
-
-# Default environment variables for authentication and connection persistence
-ENV ADMIN_USERNAME=admin
-ENV ADMIN_PASSWORD=admin
-ENV PERSISTENT_CONNECTION=true
 
 # Create a non-root user for security best practices
 RUN addgroup --system --gid 1001 nodejs && \
@@ -62,8 +56,6 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Set user and expose the port
 USER nextjs
 EXPOSE 3000
-ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
 
 # server.js is automatically created by Next.js in standalone mode
 CMD ["node", "server.js"]

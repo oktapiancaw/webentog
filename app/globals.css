@@ -1,14 +1,14 @@
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -47,73 +47,99 @@
   --radius-4xl: calc(var(--radius) + 16px);
 }
 
-:root {
-  --radius: 0rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.15 0.02 260);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.15 0.02 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.15 0.02 260);
-  --primary: oklch(0.55 0.12 185);
-  --primary-foreground: oklch(1 0 0);
-  --secondary: oklch(0.96 0.01 260);
-  --secondary-foreground: oklch(0.15 0.02 260);
-  --muted: oklch(0.96 0.01 260);
-  --muted-foreground: oklch(0.5 0.02 260);
-  --accent: oklch(0.96 0.01 260);
-  --accent-foreground: oklch(0.15 0.02 260);
-  --destructive: oklch(0.55 0.22 25);
-  --border: oklch(0.92 0.01 260);
-  --input: oklch(0.92 0.01 260);
-  --ring: oklch(0.55 0.12 185 / 50%);
-  --chart-1: oklch(0.55 0.12 185);
-  --chart-2: oklch(0.18 0.04 260);
-  --chart-3: oklch(0.4 0.07 227);
-  --chart-4: oklch(0.82 0.18 84);
-  --chart-5: oklch(0.76 0.18 70);
-  --sidebar: oklch(0.99 0.005 260);
-  --sidebar-foreground: oklch(0.15 0.02 260);
-  --sidebar-primary: oklch(0.55 0.12 185);
-  --sidebar-primary-foreground: oklch(1 0 0);
-  --sidebar-accent: oklch(0.96 0.01 260);
-  --sidebar-accent-foreground: oklch(0.15 0.02 260);
-  --sidebar-border: oklch(0.92 0.01 260);
-  --sidebar-ring: oklch(0.55 0.12 185 / 50%);
+/* Linear palette. Raw tokens: bg-carbon, text-fog, border-graphite. */
+@theme {
+  --color-void: #08090a;
+  --color-carbon: #0f1011;
+  --color-obsidian: #161718;
+  --color-graphite: #23252a;
+  --color-smoke: #383b3f;
+  --color-ash: #62666d;
+  --color-fog: #8a8f98;
+  --color-mist: #d0d6e0;
+  --color-bone: #e5e5e6;
+  --color-paper: #ffffff;
+  /* Brand accent. Replaces Linear's acid lime as the single chromatic action
+     colour. Overrides the Do/Don't note in AI_SETUP/DESIGN.md on purpose.
+     Equivalent to oklch(0.55 0.12 185). */
+  --color-brand: #00877a;
+  --color-acid-lime: #e4f222;
+  --color-pulse-green: #27a644;
+  --color-coral-red: #eb5757;
+  --color-signal-teal: #02b8cc;
+  --color-iris-violet: #6366f1;
+  --color-lavender: #8b5cf6;
 }
 
+/* Light. Derived: Linear ships no light spec, so greys invert off the ramp. */
+:root {
+  --radius: 0.5rem;
+  --background: #ffffff;
+  --foreground: #1c1d1f;
+  --card: #ffffff;
+  --card-foreground: #1c1d1f;
+  --popover: #ffffff;
+  --popover-foreground: #1c1d1f;
+  --primary: #00877a;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f5f6;
+  --secondary-foreground: #23252a;
+  --muted: #f4f5f6;
+  --muted-foreground: #62666d;
+  --accent: #f0f1f2;
+  --accent-foreground: #08090a;
+  --destructive: #d93a3a;
+  --border: #e6e7e9;
+  --input: #e6e7e9;
+  --ring: #8a8f98;
+  --chart-1: #6366f1;
+  --chart-2: #02b8cc;
+  --chart-3: #27a644;
+  --chart-4: #8b5cf6;
+  --chart-5: #eb5757;
+  --sidebar: #fafafa;
+  --sidebar-foreground: #1c1d1f;
+  --sidebar-primary: #00877a;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f0f1f2;
+  --sidebar-accent-foreground: #08090a;
+  --sidebar-border: #e6e7e9;
+  --sidebar-ring: #8a8f98;
+}
+
+/* Dark: exact Linear tokens. */
 .dark {
-  --background: oklch(0.18 0.02 260);
-  --foreground: oklch(0.95 0.01 260);
-  --card: oklch(0.22 0.02 260);
-  --card-foreground: oklch(0.95 0.01 260);
-  --popover: oklch(0.22 0.02 260);
-  --popover-foreground: oklch(0.95 0.01 260);
-  --primary: oklch(0.65 0.15 185);
-  --primary-foreground: oklch(0.15 0.02 260);
-  --secondary: oklch(0.28 0.02 260);
-  --secondary-foreground: oklch(0.95 0.01 260);
-  --muted: oklch(0.28 0.02 260);
-  --muted-foreground: oklch(0.7 0.02 260);
-  --accent: oklch(0.28 0.02 260);
-  --accent-foreground: oklch(0.95 0.01 260);
-  --destructive: oklch(0.65 0.22 25);
-  --border: oklch(0.35 0.02 260 / 50%);
-  --input: oklch(0.35 0.02 260 / 50%);
-  --ring: oklch(0.65 0.15 185 / 50%);
-  --chart-1: oklch(0.65 0.15 185);
-  --chart-2: oklch(0.85 0.1 185);
-  --chart-3: oklch(0.76 0.18 70);
-  --chart-4: oklch(0.62 0.26 303);
-  --chart-5: oklch(0.64 0.24 16);
-  --sidebar: oklch(0.22 0.02 260);
-  --sidebar-foreground: oklch(0.95 0.01 260);
-  --sidebar-primary: oklch(0.65 0.15 185);
-  --sidebar-primary-foreground: oklch(0.15 0.02 260);
-  --sidebar-accent: oklch(0.28 0.02 260);
-  --sidebar-accent-foreground: oklch(0.95 0.01 260);
-  --sidebar-border: oklch(0.35 0.02 260 / 50%);
-  --sidebar-ring: oklch(0.65 0.15 185 / 50%);
+  --background: #08090a;
+  --foreground: #d0d6e0;
+  --card: #0f1011;
+  --card-foreground: #d0d6e0;
+  --popover: #161718;
+  --popover-foreground: #d0d6e0;
+  --primary: #00877a;
+  --primary-foreground: #ffffff;
+  --secondary: #23252a;
+  --secondary-foreground: #d0d6e0;
+  --muted: #161718;
+  --muted-foreground: #8a8f98;
+  --accent: #23252a;
+  --accent-foreground: #ffffff;
+  --destructive: #eb5757;
+  --border: #23252a;
+  --input: #23252a;
+  --ring: #62666d;
+  --chart-1: #6366f1;
+  --chart-2: #02b8cc;
+  --chart-3: #27a644;
+  --chart-4: #8b5cf6;
+  --chart-5: #eb5757;
+  --sidebar: #0f1011;
+  --sidebar-foreground: #d0d6e0;
+  --sidebar-primary: #00877a;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #161718;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #23252a;
+  --sidebar-ring: #62666d;
 }
 
 @layer base {
@@ -122,5 +148,26 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* cv01/ss03/zero make Inter read as Linear's Inter. */
+    font-feature-settings:
+      'cv01' on,
+      'ss03' on,
+      'zero' on;
+    letter-spacing: -0.011em;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply text-foreground;
+    font-weight: 510;
+    letter-spacing: -0.022em;
+  }
+}
+
+@utility text-strong {
+  color: var(--foreground);
+  .dark & {
+    color: #ffffff;
   }
 }

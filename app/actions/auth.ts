@@ -5,9 +5,6 @@ import { cookies } from 'next/headers';
 const SESSION_COOKIE_NAME = 'auth_session';
 const IS_PRESISTENT = process.env.PERSISTENT_CONNECTION === 'production';
 
-/**
- * Actions
- */
 export async function loginAction(
   usernameInput: string,
   passwordInput: string
@@ -16,7 +13,7 @@ export async function loginAction(
   const adminPassword = process.env.ADMIN_PASSWORD;
 
   if (usernameInput === adminUsername && passwordInput === adminPassword) {
-    // Create the JWT session
+    // Create the JWT session.
     const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const session = await encrypt({ user: adminUsername, expires });
 
@@ -39,6 +36,17 @@ export async function logoutAction() {
   const cookieStore = await cookies();
   cookieStore.delete(SESSION_COOKIE_NAME);
   return { success: true };
+}
+
+/**
+ * Whether connections and pins live in SQLite.
+ *
+ * Must be a server action. `lib/session.ts` reads the same env var without
+ * 'use server', so a client importing it gets no inlined value and always
+ * reads true.
+ */
+export async function getPersistentMode(): Promise<boolean> {
+  return process.env.PERSISTENT_CONNECTION !== 'false';
 }
 
 export async function isAuthenticated() {

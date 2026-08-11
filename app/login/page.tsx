@@ -21,8 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { WebEntogLogo } from '@/components/logo';
-import { isPersistentMode } from '@/lib/session';
-import { loginAction } from '../actions/auth';
+import { getPersistentMode, loginAction } from '../actions/auth';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -33,7 +32,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     async function checkMode() {
-      const persistent = await isPersistentMode();
+      const persistent = await getPersistentMode();
       if (!persistent) {
         router.push('/');
       } else {
@@ -69,27 +68,21 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex flex-col space-y-6 min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
-      <div className="p-6 w-full flex justify-center items-center gap-3">
-        <div className="size-12  flex items-center justify-center shrink-0">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-background p-4">
+      <div className="flex w-full items-center justify-center gap-3 p-6">
+        <div className="flex size-11 shrink-0 items-center justify-center">
           <WebEntogLogo className="size-full" />
         </div>
         <div>
-          <h2 className="text-base font-black leading-tight uppercase tracking-wide">
-            WebEntog
-          </h2>
-          <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">
-            Storage Console
-          </p>
+          <h2 className="text-[17px] leading-tight text-strong">WebEntog</h2>
+          <p className="text-[13px] text-muted-foreground">Storage console</p>
         </div>
       </div>
-      <div className="w-full max-w-md space-y-8 rounded-none border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <div className="w-full max-w-md space-y-8 rounded-xl border bg-card p-8">
         <div className="text-center">
-          <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-50">
-            Welcome Back
-          </h1>
-          <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-            Please sign in to your account
+          <h1 className="text-[24px] text-strong">Welcome back</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Sign in to continue
           </p>
         </div>
 

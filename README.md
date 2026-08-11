@@ -1,106 +1,151 @@
 # WebEntog 🦆
 
-**Object Storage Management on the browser.**
+**Object storage management in your browser.**
 
-WebEntog is a lightweight, web-based alternative to desktop object storage clients (like Cyberduck or FileZilla). It is designed for users who need quick, secure access to their cloud storage but are unable or unwilling to download and install dedicated desktop software.
+Point it at any S3-compatible bucket (AWS, MinIO, Ceph RGW, Garage) and browse, preview, upload, and restore objects without leaving the tab.
 
-## ✨ Features
+---
 
-- **Authentication:** Secure login system to protect your storage management dashboard.
-- **Flexible Persistence:** Toggle between "Persistent Mode" (save connections to a database) or "Non-Persistent Mode" (transient, session-based connections).
-- **No Installation Required:** Fully functional in any modern web browser.
-- **Dynamic Connections:** Connect to any S3-compatible object storage simply by entering your endpoint, credentials, and bucket name in the UI.
-- **Universal Storage Compatibility:** Powered by Apache OpenDAL, enabling potential future support for dozens of storage backends (GCS, Azure, WebDAV, etc.).
-- **Secure Execution:** Credentials and native Rust binaries execute securely on the server via Next.js Server Actions, keeping your sensitive keys out of the browser.
-- **Direct Downloads:** Generates secure, short-lived pre-signed URLs so your browser downloads files directly from the storage bucket, preventing server bottlenecks.
-- **Real-time Search:** Lightning-fast, client-side file filtering.
+## What you can do
 
-## 🛠️ Tech Stack
+| | |
+| :-- | :-- |
+| 📂 **Browse** | Folders first, with a breadcrumb path you can type into |
+| 👁️ **Preview** | Images, video, audio, PDF, JSON, and 30+ code/text formats in a side panel you can drag wider |
+| 🕓 **Versions** | List every version of an object, restore an old one, or save it out as a new key |
+| 📌 **Pins** | Bookmark folders per connection so deep prefixes stay one click away |
+| ⬆️ **Upload** | Drag and drop up to 5 files at once |
+| ⬇️ **Download** | Single objects, or a whole folder zipped on the fly |
+| 🎨 **Themes** | Dark by default, light if you prefer it |
 
-- **Frontend:** Next.js (App Router), React, Tailwind CSS, shadcn/ui
-- **Core Logic:** Apache OpenDAL (Node.js Binding)
-- **Icons:** Lucide React
-- **Deployment:** Docker (Multi-stage build)
+---
 
-## ⚙️ Configuration
-
-WebEntog uses environment variables for security and behavior control. Create a `.env` file in the root directory:
-
-| Variable                | Default | Description                                                        |
-| :---------------------- | :------ | :----------------------------------------------------------------- |
-| `ADMIN_USERNAME`        | `admin` | The username for the login page.                                   |
-| `ADMIN_PASSWORD`        | `admin` | The password for the login page.                                   |
-| `PERSISTENT_CONNECTION` | `true`  | Set to `false` to disable the login page and database persistence. |
-
-## 🚀 Getting Started (Local Development)
-
-### Prerequisites
-
-- Node.js (v20+ recommended)
-- npm or pnpm
-
-### Installation
-
-1. Clone the repository:
+## Quick start
 
 ```bash
 git clone https://github.com/oktapiancaw/webentog.git
 cd webentog
-```
-
-2. Install dependencies:
-   _(Note: Due to React 19 peer dependencies with certain UI libraries, use the legacy flag if using npm)_
-
-```bash
 npm install --legacy-peer-deps
-```
-
-3. Setup Environment:
-
-```bash
-cp .env.example .env # If available, or create manually
-```
-
-4. Start the development server:
-
-```bash
 npm run dev
 ```
 
-5. Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open <http://localhost:3000>, click **New connection** in the sidebar, and fill in your endpoint, keys, and bucket.
 
-> **Note on OpenDAL Native Bindings:** If you encounter a `Cannot find native binding` error during installation, clear your `node_modules` and run `npm rebuild` to ensure the Rust binaries for your operating system are downloaded correctly.
+> React 19 peer ranges trip up some UI libraries, hence `--legacy-peer-deps`.
 
-## 🐳 Docker Deployment
+<details>
+<summary><b>Hit <code>Cannot find native binding</code>?</b></summary>
 
-WebEntog includes a highly optimized, multi-stage Dockerfile that leverages Next.js standalone output and Debian-slim.
+OpenDAL ships Rust binaries per platform. Delete `node_modules` and run `npm rebuild` so npm fetches the one matching your OS.
 
-1. Build the image:
+</details>
+
+---
+
+## Configuration
+
+Create a `.env` in the project root:
+
+| Variable | Default | What it does |
+| :-- | :-- | :-- |
+| `ADMIN_USERNAME` | `admin` | Login username |
+| `ADMIN_PASSWORD` | `admin` | Login password |
+| `JWT_SECRET` | `secret-change-me` | Signs the session cookie. Change it before you expose the app. |
+| `PERSISTENT_CONNECTION` | `true` | Picks where connections and pins live. See below. |
+
+### Two storage modes
+
+<details open>
+<summary><b>Persistent</b> (<code>PERSISTENT_CONNECTION=true</code>)</summary>
+
+Your connections and pinned folders go into SQLite at `./data/connections.db`. The login page guards access, and a JWT cookie keeps you signed in for 7 days.
+
+Mount `./data` as a volume so your setup survives a container rebuild. The included `docker-compose.yaml` already does this.
+
+</details>
+
+<details>
+<summary><b>Non-persistent</b> (<code>PERSISTENT_CONNECTION=false</code>)</summary>
+
+Nothing reaches disk. SQLite never opens, the login page disappears, and every request counts as authorized. Connections and pins sit in the browser's `sessionStorage`, so closing the tab wipes them.
+
+Use this for a throwaway container or a single-user box behind its own auth.
+
+</details>
+
+---
+
+## Docker
+
+```bash
+docker compose up -d
+```
+
+Or build it yourself:
 
 ```bash
 docker build -t webentog .
-```
-
-2. Run the container:
-
-```bash
 docker run -p 3000:3000 \
   -e ADMIN_USERNAME=myuser \
   -e ADMIN_PASSWORD=mypassword \
+  -e JWT_SECRET=$(openssl rand -hex 32) \
   -e PERSISTENT_CONNECTION=true \
+  -v ./data:/app/data \
   webentog
 ```
 
-The application will be available at `http://localhost:3000`.
+The multi-stage build uses Next.js standalone output on Debian slim.
 
-## 🔒 Security Note
+---
 
-WebEntog provides a login layer to protect your storage configurations.
+## How listing works
 
-- In **Persistent Mode** (`PERSISTENT_CONNECTION=true`), your connection details (endpoints, keys, etc.) are saved to a local SQLite database (`./data/connections.db`).
-- In **Non-Persistent Mode** (`PERSISTENT_CONNECTION=false`), the login page is disabled, and the application treats all traffic as authorized, suitable for single-user transient environments.
+Buckets get large, so WebEntog picks a strategy per folder:
 
-## 📄 License
+- **Under 100 entries:** it reads the whole folder, sorts folders first, and pages in memory. Search covers every object.
+- **Over 100 entries:** it pages through S3 cursors, one request per page. Search covers the page you are on.
+
+Large folders show a **Scan all** button. Object storage can list subfolder prefixes after every file key, so a subfolder inside a 10,000-object directory may not surface until you read the whole directory. That button reads it, at one request per 1,000 objects.
+
+The **Count** button in the footer walks the folder to tally objects. It stops at 5,000 and shows `5000+` rather than pretending it finished.
+
+---
+
+## Object versions
+
+Open a file, then click **Versions**.
+
+Restoring writes the chosen version back over the current key, which adds a new version on top rather than deleting history. On a bucket without versioning it overwrites for good, so the confirm dialog says so before you commit.
+
+**Save as** copies a version to a new key and refuses to land on one that already exists.
+
+> Listing versions needs bucket-scoped `s3:ListBucketVersions`, which is broader than the object reads everything else uses. Without it, the dialog shows the current object and explains which grant is missing.
+
+---
+
+## Scripts
+
+```bash
+npm run dev     # dev server
+npm run build   # production build
+npm start       # serve the build
+npm run lint    # eslint + prettier
+npm test        # node:test, no framework
+```
+
+---
+
+## Security
+
+Storage credentials sit unencrypted in `./data/connections.db` under persistent mode. Protect that file the way you would an SSH key: keep it off shared volumes and out of backups you do not control.
+
+Set `JWT_SECRET` to something random. The default signs every session with a string published in this repository.
+
+Presigned preview URLs expire after an hour.
+
+---
+
+## License
 
 WebEntog is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 

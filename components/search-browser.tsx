@@ -14,7 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Button } from '@/components/ui/button';
@@ -57,15 +57,17 @@ interface SearchBrowserProps {
   onRefresh?: () => void;
   currentPath: string;
   config: ConnectionConfig;
+  /** false for folders too large to buffer, where filtering sees one page. */
+  searchesWholeFolder?: boolean;
 }
 
 const formSchema = z.object({
   files: z
     .array(z.custom<File>())
     .min(1, 'Please select at least one file')
-    .max(2, 'Please select up to 2 files')
-    .refine((files) => files.every((file) => file.size <= 5 * 1024 * 1024), {
-      message: 'File size must be less than 5MB',
+    .max(5, 'Please select up to 5 files')
+    .refine((files) => files.every((file) => file.size <= 10 * 1024 * 1024), {
+      message: 'File size must be less than 10MB',
       path: ['files'],
     }),
 });
@@ -79,8 +81,9 @@ export function SearchBrowser({
   onRefresh,
   config,
   currentPath,
+  searchesWholeFolder = true,
 }: SearchBrowserProps) {
-  const [isDialogOpen, setIsDialogOpen] = useState(false); // New state
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -88,8 +91,6 @@ export function SearchBrowser({
       files: [],
     },
   });
-
-  // const [searchText, setSearchText] = useState('');
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') onSearch?.(searchText);
@@ -103,28 +104,23 @@ export function SearchBrowser({
     e.preventDefault();
 
     if (files.length === 0) {
-      alert('Please select at least one file.');
+      toast.error('Please select at least one file.');
       return;
     }
 
     const formData = new FormData();
-    // Append all files for the backend to process
     files.forEach((file) => {
       formData.append('files', file);
     });
 
     try {
-      // Assuming 'config' comes from your context/props
       const response = await uploadFiles(config, formData, currentPath);
 
       if (response.success) {
-        // 2. Clear the files
         handleResetFiles();
 
-        // 3. Close the dialog
         setIsDialogOpen(false);
 
-        // 4. Trigger your refresh logic to show the new files
         onRefresh?.();
 
         toast.success('Uploaded successfully!');
@@ -135,54 +131,57 @@ export function SearchBrowser({
     }
   };
   return (
-    <div className="flex space-x-2">
-      <Input
-        id="searchText"
-        value={searchText}
-        className="w-full rounded-none font-mono text-sm"
-        placeholder="Search your file.."
-        onKeyDown={handleKeyDown}
-        onChange={(e) => setSearchText(e.target.value)}
-      />
+    <div className="flex gap-2">
+      <div className="relative w-full">
+        <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          id="searchText"
+          value={searchText}
+          className="w-full pl-9 font-mono text-sm"
+          placeholder={
+            searchesWholeFolder ? 'Search this folder…' : 'Search current page…'
+          }
+          title={
+            searchesWholeFolder
+              ? 'Filters every object in this folder.'
+              : 'This folder is too large to load at once, and object storage has no substring search, so filtering covers the page you are on.'
+          }
+          onKeyDown={handleKeyDown}
+          onChange={(e) => setSearchText(e.target.value)}
+        />
+      </div>
 
       <Button
-        variant={'secondary'}
-        className="justify-center gap-2 rounded-none font-semibold uppercase tracking-wider text-xs"
+        variant="outline"
+        size="icon"
         onClick={() => onRefresh?.()}
+        title="Refresh"
       >
         <RefreshCwIcon className="size-4" />
       </Button>
-      <Button
-        variant={'default'}
-        className="justify-center gap-2 rounded-none font-semibold uppercase tracking-wider text-xs"
-        onClick={() => onSearch?.(searchText)}
-      >
+      <Button variant="outline" onClick={() => onSearch?.(searchText)}>
         Search
-        <SearchIcon className="size-4" />
       </Button>
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogTrigger asChild>
-          <Button
-            variant="outline"
-            className="justify-center gap-2 rounded-none font-semibold uppercase tracking-wider text-xs"
-          >
-            Upload
+          <Button variant="default">
             <UploadIcon className="size-4" />
+            Upload
           </Button>
         </DialogTrigger>
 
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Upload Files</DialogTitle>
-            <span>
-              target path:
-              <span className="font-semibold italic"> {currentPath}</span>
+            <DialogTitle>Upload files</DialogTitle>
+            <span className="text-sm text-muted-foreground">
+              Target path:{' '}
+              <span className="font-mono text-foreground">{currentPath}</span>
             </span>
           </DialogHeader>
 
-          <p className="text-pretty mt-2 text-xs leading-5 text-muted-foreground sm:flex sm:items-center sm:justify-between">
-            <span>Accepted all type files.</span>
-            <span className="pl-1 sm:pl-0">Max. size: 10MB</span>
+          <p className="mt-2 flex flex-wrap items-center justify-between gap-1 text-xs text-muted-foreground">
+            <span>All file types accepted.</span>
+            <span>Max. 5 files · 10MB each</span>
           </p>
 
           <form
@@ -190,14 +189,12 @@ export function SearchBrowser({
             className="w-full"
             onSubmit={handleUploadSubmit}
           >
-            {/*   */}
             <FileUpload
               value={files}
               onValueChange={(newFiles) => {
                 setFiles(newFiles);
-                form.setValue('files', newFiles); // Sync with react-hook-form
+                form.setValue('files', newFiles);
               }}
-              accept="image/*"
               maxFiles={5}
               maxSize={10 * 1024 * 1024}
               onFileReject={(_, message) => {
