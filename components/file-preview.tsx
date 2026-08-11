@@ -29,6 +29,7 @@ import { Button } from '@/components/ui/button';
 import { CodePreview } from '@/components/code-preview';
 import { FileItem, getFileIcon } from '@/components/app-browser';
 import type { ObjectMetadata } from '@/app/actions/object-management';
+import { copyToClipboard } from '@/lib/utils';
 
 interface FilePreviewProps {
   file: FileItem | null;
@@ -147,9 +148,9 @@ export function FilePreview({
 
   if (!file) return null;
 
-  const copyPath = () => {
-    navigator.clipboard.writeText(file.fullPath);
-    toast.success('Path copied');
+  const copyPath = async () => {
+    const ok = await copyToClipboard(file.fullPath);
+    toast[ok ? 'success' : 'error'](ok ? 'Path copied' : 'Copy failed');
   };
 
   const startDrag = (e: React.PointerEvent<HTMLDivElement>) => {

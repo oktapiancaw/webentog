@@ -54,7 +54,7 @@ import {
 } from './ui/dropdown-menu';
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { cn, type FileType } from '@/lib/utils';
+import { cn, copyToClipboard, type FileType } from '@/lib/utils';
 
 export type { FileType };
 
@@ -144,9 +144,9 @@ export function StorageBrowser({
   // Same inline confirm as connection deletion in app-sidebar.
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const copyPath = (path: string) => {
-    navigator.clipboard.writeText(path);
-    toast.success('Path copied');
+  const copyPath = async (path: string) => {
+    const ok = await copyToClipboard(path);
+    toast[ok ? 'success' : 'error'](ok ? 'Path copied' : 'Copy failed');
   };
 
   const renderRows = () => {

@@ -20,7 +20,7 @@ import ShikiHighlighter from 'react-shiki/web';
 import { useTheme } from 'next-themes';
 import { Button } from './ui/button';
 import { toast } from 'sonner';
-import { languageFromName } from '@/lib/utils';
+import { copyToClipboard, languageFromName } from '@/lib/utils';
 
 interface CodePreviewProps {
   presignedUrl: string;
@@ -73,8 +73,11 @@ export function CodePreview({ presignedUrl, fileName = '' }: CodePreviewProps) {
     return () => controller.abort();
   }, [presignedUrl, language]);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(data.trim());
+  const handleCopy = async () => {
+    if (!(await copyToClipboard(data.trim()))) {
+      toast.error('Copy failed');
+      return;
+    }
     setCopied(true);
     toast.success('Content copied to clipboard');
     setTimeout(() => setCopied(false), 2000);

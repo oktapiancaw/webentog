@@ -109,6 +109,42 @@ export function cursorAfterKey(key: string, isFolder: boolean): string {
   return key.slice(0, -1) + String.fromCharCode(lastByte + 1);
 }
 
+/**
+ * Copies text, falling back for non-HTTPS deploys.
+ *
+ * navigator.clipboard exists only in a secure context, so a container served
+ * over plain HTTP on a LAN address has no clipboard API at all. The deprecated
+ * execCommand textarea trick still works there.
+ *
+ * Returns whether the copy landed, since writeText can reject.
+ */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* fall through to the legacy path */
+    }
+  }
+
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    // Keep it off-screen and unfocusable to the eye, but still selectable.
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 export interface VersionListFailure {
   reason: 'denied' | 'unsupported';
   detail: string;

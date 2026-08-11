@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { logoutAction } from '@/app/actions/auth';
+import { copyToClipboard } from '@/lib/utils';
 
 interface SiteHeaderProps {
   onNavigate?: (folderName: string) => void;
@@ -88,7 +89,7 @@ export function SiteHeader({
     }
   };
 
-  const handleCopyPath = () => {
+  const handleCopyPath = async () => {
     const cleanPath =
       currentPath === '/'
         ? ''
@@ -101,7 +102,10 @@ export function SiteHeader({
         : bucket
       : currentPath;
 
-    navigator.clipboard.writeText(fullPath);
+    if (!(await copyToClipboard(fullPath))) {
+      toast.error('Copy failed');
+      return;
+    }
     setCopied(true);
     toast.success('Path copied to clipboard');
     setTimeout(() => setCopied(false), 2000);
