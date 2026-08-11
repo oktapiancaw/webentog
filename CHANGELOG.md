@@ -1,8 +1,18 @@
+## [1.3.1] - 2026-08-11
+
+### 🐛 Bug Fixes
+
+- Copy buttons work on plain-HTTP deploys
+
+### 📚 Documentation
+
+- :bookmark: change package.json version to 1.3.1
 ## [1.3.0] - 2026-08-11
 
 ### 🚀 Features
 
 - [**breaking**] Redesign UI, add object versioning, pinned folders, cursor paging
+- :memo: Add changelog entry for 1.3.0
 
 ### 🐛 Bug Fixes
 
