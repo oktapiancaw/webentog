@@ -11,6 +11,15 @@
 # ---------------------------------------------------------
 FROM node:22-trixie-slim AS base
 
+# reqwest, inside OpenDAL's binding, reads the system CA store when it builds
+# its client, and slim images ship none. Without this every S3 call panics with
+# "No CA certificates were loaded from the system", which then poisons a
+# LazyLock and fails every later request until the container restarts. Node
+# carries its own CA bundle, so npm install hides the gap until runtime.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
 # ---------------------------------------------------------
 # Stage 1: Install Dependencies
 # ---------------------------------------------------------
