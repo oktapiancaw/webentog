@@ -22,6 +22,8 @@ Point it at any S3-compatible bucket (AWS, MinIO, Ceph RGW, Garage) and browse, 
 
 ## Quick start
 
+Needs **Node 22 or newer**. `better-sqlite3` publishes no prebuilt binary for Node 20, so older versions try to compile it from source.
+
 ```bash
 git clone https://github.com/oktapiancaw/webentog.git
 cd webentog

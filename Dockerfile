@@ -1,8 +1,15 @@
 # ---------------------------------------------------------
 # Base Setup
-# Using Debian slim to ensure OpenDAL's Rust glibc bindings work natively
+# Debian slim so OpenDAL's Rust glibc bindings work natively.
+#
+# Node 22, not 20: better-sqlite3 ships no Node 20 prebuilt binary, so install
+# falls back to node-gyp and fails on this image, which has no Python or
+# compiler. Node 20 is also past end of life.
+#
+# Trixie, not bookworm: opendal 0.49.6's binding links against GLIBC_2.38, and
+# bookworm carries 2.36, so the module fails to dlopen on Debian 12.
 # ---------------------------------------------------------
-FROM node:20-bookworm-slim AS base
+FROM node:22-trixie-slim AS base
 
 # ---------------------------------------------------------
 # Stage 1: Install Dependencies
