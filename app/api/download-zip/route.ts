@@ -12,7 +12,7 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import { Operator } from 'opendal';
+import { getOperator } from '@/lib/opendal';
 import { PassThrough, Readable } from 'node:stream';
 import archiver from 'archiver';
 import { appendPathToArchive } from './stream';
@@ -21,13 +21,7 @@ export async function POST(req: Request) {
   try {
     const { config, folderPath, listFiles } = await req.json();
 
-    const op = new Operator('s3', {
-      endpoint: config.endpoint,
-      access_key_id: config.accessKey,
-      secret_access_key: config.secretKey,
-      bucket: config.bucket,
-      region: config.region,
-    });
+    const op = getOperator(config);
 
     const passthrough = new PassThrough();
     const archive = archiver('zip', { zlib: { level: 5 } });

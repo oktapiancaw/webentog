@@ -14,7 +14,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 'use server';
 
-import { Operator } from 'opendal';
+import { getOperator } from '@/lib/opendal';
 import { getDb } from '@/lib/db';
 import type { ConnectionConfig } from './object-management';
 
@@ -80,14 +80,7 @@ export async function validateFolderPaths(
   if (paths.length === 0) return [];
 
   try {
-    const op = new Operator('s3', {
-      endpoint: config.endpoint,
-      access_key_id: config.accessKey,
-      secret_access_key: config.secretKey,
-      bucket: config.bucket,
-      region: config.region,
-      allow_http: 'true',
-    });
+    const op = getOperator(config);
 
     return await Promise.all(
       // A failed exists() reads as "missing" instead of aborting the batch. One

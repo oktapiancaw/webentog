@@ -12,7 +12,7 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import { Operator } from 'opendal';
+import { getOperator } from '@/lib/opendal';
 import { Readable } from 'node:stream';
 import { getDb } from '@/lib/db';
 import { readerToStream } from '../download-zip/stream';
@@ -40,14 +40,7 @@ function contentDisposition(name: string) {
  * `download` attribute cross-origin. The result was JSON opening in a tab.
  */
 async function streamAttachment(conn: ConnectionRow, path: string) {
-  const op = new Operator('s3', {
-    endpoint: conn.endpoint,
-    access_key_id: conn.accessKey,
-    secret_access_key: conn.secretKey,
-    bucket: conn.bucket,
-    region: conn.region,
-    allow_http: 'true',
-  });
+  const op = getOperator(conn);
 
   const meta = await op.stat(path);
   if (!meta.isFile()) {

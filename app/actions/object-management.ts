@@ -14,7 +14,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 'use server';
 
-import { Operator } from 'opendal';
+import type { Operator } from 'opendal';
+import { getOperator } from '@/lib/opendal';
 import { getDb } from '@/lib/db';
 import {
   classifyVersionListFailure,
@@ -83,14 +84,7 @@ export async function uploadFiles(
   formData: FormData,
   folderPath: string
 ) {
-  const op = new Operator('s3', {
-    endpoint: config.endpoint,
-    access_key_id: config.accessKey,
-    secret_access_key: config.secretKey,
-    bucket: config.bucket,
-    region: config.region,
-    allow_http: 'true',
-  });
+  const op = getOperator(config);
 
   const files = formData.getAll('files') as File[];
   if (!files.length) throw new Error('No files provided');
@@ -171,14 +165,7 @@ export async function listStorageFiles(
   const isFirstPage = cursor === null;
 
   try {
-    const op = new Operator('s3', {
-      endpoint: config.endpoint,
-      access_key_id: config.accessKey,
-      secret_access_key: config.secretKey,
-      bucket: config.bucket,
-      region: config.region,
-      allow_http: 'true',
-    });
+    const op = getOperator(config);
 
     // First page walks threshold+1 to decide buffered vs cursor; the +1 proves
     // the folder is over the line. Later pages need limit+1 as a look-ahead.
@@ -277,14 +264,7 @@ export async function countFolderObjects(
   maxScan = 5000
 ): Promise<{ count: number; capped: boolean }> {
   try {
-    const op = new Operator('s3', {
-      endpoint: config.endpoint,
-      access_key_id: config.accessKey,
-      secret_access_key: config.secretKey,
-      bucket: config.bucket,
-      region: config.region,
-      allow_http: 'true',
-    });
+    const op = getOperator(config);
 
     const lister = await op.lister(path, { recursive: false });
 
@@ -304,13 +284,7 @@ export async function countFolderObjects(
 
 export async function getDownloadUrl(config: ConnectionConfig, path: string) {
   try {
-    const op = new Operator('s3', {
-      endpoint: config.endpoint,
-      access_key_id: config.accessKey,
-      secret_access_key: config.secretKey,
-      bucket: config.bucket,
-      region: config.region,
-    });
+    const op = getOperator(config);
 
     const req = await op.presignRead(path, 3600);
 
@@ -339,14 +313,7 @@ export async function getObjectMetadata(
   path: string
 ): Promise<ObjectMetadata> {
   try {
-    const op = new Operator('s3', {
-      endpoint: config.endpoint,
-      access_key_id: config.accessKey,
-      secret_access_key: config.secretKey,
-      bucket: config.bucket,
-      region: config.region,
-      allow_http: 'true',
-    });
+    const op = getOperator(config);
 
     const meta = await op.stat(path);
     const contentLength =
@@ -438,14 +405,7 @@ export async function listObjectVersions(
   config: ConnectionConfig,
   path: string
 ): Promise<ListObjectVersionsResult> {
-  const op = new Operator('s3', {
-    endpoint: config.endpoint,
-    access_key_id: config.accessKey,
-    secret_access_key: config.secretKey,
-    bucket: config.bucket,
-    region: config.region,
-    allow_http: 'true',
-  });
+  const op = getOperator(config);
 
   try {
     const lister = await op.lister(dirOf(path), {
@@ -534,14 +494,7 @@ export async function restoreObjectVersion(
   versionId: string
 ): Promise<{ success: true }> {
   try {
-    const op = new Operator('s3', {
-      endpoint: config.endpoint,
-      access_key_id: config.accessKey,
-      secret_access_key: config.secretKey,
-      bucket: config.bucket,
-      region: config.region,
-      allow_http: 'true',
-    });
+    const op = getOperator(config);
 
     await copyVersionTo(op, path, versionId, path);
     return { success: true };
@@ -564,14 +517,7 @@ export async function saveObjectVersionAs(
     throw new Error('Use Restore to overwrite the same path.');
 
   try {
-    const op = new Operator('s3', {
-      endpoint: config.endpoint,
-      access_key_id: config.accessKey,
-      secret_access_key: config.secretKey,
-      bucket: config.bucket,
-      region: config.region,
-      allow_http: 'true',
-    });
+    const op = getOperator(config);
 
     // "Save as" promises it never overwrites, so refuse an occupied key. Only a
     // successful stat counts as occupied; a throwing stat falls through.
@@ -601,13 +547,7 @@ export async function saveObjectVersionAs(
 
 export async function deleteFile(config: ConnectionConfig, path: string) {
   try {
-    const op = new Operator('s3', {
-      endpoint: config.endpoint,
-      access_key_id: config.accessKey,
-      secret_access_key: config.secretKey,
-      bucket: config.bucket,
-      region: config.region,
-    });
+    const op = getOperator(config);
     await op.delete(path);
     return { success: true };
   } catch (error) {
@@ -618,13 +558,7 @@ export async function deleteFile(config: ConnectionConfig, path: string) {
 
 export async function createFolder(config: ConnectionConfig, path: string) {
   try {
-    const op = new Operator('s3', {
-      endpoint: config.endpoint,
-      access_key_id: config.accessKey,
-      secret_access_key: config.secretKey,
-      bucket: config.bucket,
-      region: config.region,
-    });
+    const op = getOperator(config);
     await op.createDir(path);
     return { success: true };
   } catch (error) {
