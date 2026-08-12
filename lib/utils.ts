@@ -109,6 +109,83 @@ export function cursorAfterKey(key: string, isFolder: boolean): string {
   return key.slice(0, -1) + String.fromCharCode(lastByte + 1);
 }
 
+/** Rows-per-page choices, and the allowlist for `?size=`. */
+export const PAGE_SIZES = [10, 20, 50, 100];
+export const DEFAULT_PAGE_SIZE = 20;
+
+/**
+ * Reads `?page=` / `?size=`, which are whatever someone typed in the address
+ * bar. `size` is allowlisted to the offered choices, since an unbounded one
+ * turns a shared link into a full-bucket scan; `page` is 1-indexed in the URL
+ * to match the "Page N" label and comes back as a non-negative index.
+ */
+export function parsePagingParams(params: URLSearchParams): {
+  pageIndex: number;
+  pageSize: number;
+} {
+  const size = Number(params.get('size'));
+  const page = Number(params.get('page'));
+  return {
+    pageSize: PAGE_SIZES.includes(size) ? size : DEFAULT_PAGE_SIZE,
+    pageIndex: page > 1 ? Math.floor(page) - 1 : 0,
+  };
+}
+
+/**
+ * Page numbers to render, with `'gap'` where a run was elided: first page,
+ * last page, and `span` either side of the current one.
+ *
+ * Both `current` and `total` are 1-indexed, matching the button labels.
+ */
+export function pageWindow(
+  current: number,
+  total: number,
+  span = 1
+): (number | 'gap')[] {
+  if (total <= 1) return [1];
+  const here = Math.min(Math.max(current, 1), total);
+  const shown = new Set([1, total]);
+  for (let p = here - span; p <= here + span; p++) {
+    if (p >= 1 && p <= total) shown.add(p);
+  }
+
+  const out: (number | 'gap')[] = [];
+  let prev = 0;
+  for (const p of [...shown].sort((a, b) => a - b)) {
+    // A gap standing in for a single page wastes the space it saves.
+    if (prev && p - prev === 2) out.push(prev + 1);
+    else if (prev && p - prev > 2) out.push('gap');
+    out.push(p);
+    prev = p;
+  }
+  return out;
+}
+
+/**
+ * Walks a listing forward to `target`, recording the cursor that produced each
+ * page. Object-storage cursors are positional, so page N is only reachable by
+ * listing pages 0..N-1 — there is no jump. Stops early when the data ends
+ * (objects removed since the link was made) or when the folder turns out to be
+ * buffered, where paging is a local slice and there are no cursors at all.
+ */
+export async function walkCursorStack(
+  list: (
+    cursor: string | null
+  ) => Promise<{ mode: string; nextCursor: string | null }>,
+  target: number
+): Promise<{ stack: (string | null)[]; buffered: boolean }> {
+  const stack: (string | null)[] = [null];
+  let cursor: string | null = null;
+  for (let i = 0; i < target; i++) {
+    const { mode, nextCursor } = await list(cursor);
+    if (mode === 'buffered') return { stack, buffered: true };
+    if (!nextCursor) break;
+    cursor = nextCursor;
+    stack.push(cursor);
+  }
+  return { stack, buffered: false };
+}
+
 /**
  * Copies text, falling back for non-HTTPS deploys.
  *

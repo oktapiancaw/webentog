@@ -54,7 +54,13 @@ import {
 } from './ui/dropdown-menu';
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { cn, copyToClipboard, type FileType } from '@/lib/utils';
+import {
+  cn,
+  copyToClipboard,
+  PAGE_SIZES,
+  pageWindow,
+  type FileType,
+} from '@/lib/utils';
 
 export type { FileType };
 
@@ -84,8 +90,12 @@ interface StorageBrowserProps {
   pageIndex: number;
   hasNextPage: boolean;
   hasPrevPage: boolean;
+  /** Null when the total is unknown — cursor paging without a folder count. */
+  totalPages: number | null;
   onNext: () => void;
   onPrev: () => void;
+  /** Jump to a 0-indexed page. */
+  onGoToPage: (index: number) => void;
   onPageSizeChange: (size: number) => void;
   /** null until counted. Counting walks the whole folder, so it is opt-in. */
   folderCount: { count: number; capped: boolean } | null;
@@ -134,8 +144,10 @@ export function StorageBrowser({
   pageIndex,
   hasNextPage,
   hasPrevPage,
+  totalPages,
   onNext,
   onPrev,
+  onGoToPage,
   onPageSizeChange,
   folderCount,
   isCounting,
@@ -143,7 +155,6 @@ export function StorageBrowser({
 }: StorageBrowserProps) {
   // Same inline confirm as connection deletion in app-sidebar.
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-
   const copyPath = async (path: string) => {
     const ok = await copyToClipboard(path);
     toast[ok ? 'success' : 'error'](ok ? 'Path copied' : 'Copy failed');
@@ -371,10 +382,12 @@ export function StorageBrowser({
               <SelectValue placeholder={String(pageSize)} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="10">10</SelectItem>
-              <SelectItem value="20">20</SelectItem>
-              <SelectItem value="50">50</SelectItem>
-              <SelectItem value="100">100</SelectItem>
+              {/* Same list the `?size=` allowlist uses, so they cannot drift. */}
+              {PAGE_SIZES.map((n) => (
+                <SelectItem key={n} value={String(n)}>
+                  {n}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           {/* Cursor paging never reads the whole folder, so a total is opt-in. */}
@@ -412,9 +425,38 @@ export function StorageBrowser({
             >
               <ChevronLeft className="size-4" />
             </Button>
-            <span className="font-mono text-xs text-muted-foreground">
-              Page {pageIndex + 1}
-            </span>
+            {/* With no known total, the strip grows one page ahead of where
+                the cursor has reached instead of claiming a last page. */}
+            {pageWindow(
+              pageIndex + 1,
+              totalPages ?? pageIndex + (hasNextPage ? 2 : 1)
+            ).map((page, i) =>
+              page === 'gap' ? (
+                <span
+                  key={`gap-${i}`}
+                  aria-hidden
+                  className="px-0.5 font-mono text-xs text-muted-foreground"
+                >
+                  …
+                </span>
+              ) : (
+                <Button
+                  key={page}
+                  variant={page === pageIndex + 1 ? 'outline' : 'ghost'}
+                  size="icon"
+                  aria-label={`Page ${page}`}
+                  aria-current={page === pageIndex + 1 ? 'page' : undefined}
+                  className={cn(
+                    'size-8 font-mono text-xs text-muted-foreground',
+                    page === pageIndex + 1 && 'bg-accent text-strong'
+                  )}
+                  disabled={isLoading}
+                  onClick={() => onGoToPage(page - 1)}
+                >
+                  {page}
+                </Button>
+              )
+            )}
             <Button
               variant="outline"
               size="icon"

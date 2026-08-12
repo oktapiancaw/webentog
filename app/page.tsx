@@ -53,7 +53,11 @@ import {
   loadPins,
   removePin,
 } from '@/lib/storage-mode';
-import { getLastNameFromPath } from '@/lib/utils';
+import {
+  getLastNameFromPath,
+  parsePagingParams,
+  walkCursorStack,
+} from '@/lib/utils';
 
 /** Server rows carry nullable metadata; the table wants display strings. */
 const toFileItem = (item: FormattedFile): FileItem => ({
@@ -80,11 +84,12 @@ function PageContent() {
 
   const [searchText, setSearchText] = useState('');
 
-  const [pageSize, setPageSize] = useState<number>(20);
+  // Page and size live in the URL, not in state, so a view is linkable and
+  // browser back/forward walks pages the same way it walks folders.
+  const { pageIndex, pageSize } = parsePagingParams(searchParams);
   // cursorStack[i] produced page i. S3 cursors run forward only, so Prev
   // replays a recorded cursor instead of re-listing.
   const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
-  const [pageIndex, setPageIndex] = useState(0);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   // 'buffered': whole folder in `files`, paged locally. 'cursor': one page at a
   // time. Mirrored in a ref so the fetch effect reads it without re-running.
@@ -184,6 +189,34 @@ function PageContent() {
     [bookmarkedFolders]
   );
 
+  /** Writes the page into the URL; the fetch effect reacts to it from there. */
+  const goToPage = useCallback(
+    (index: number, replace = false) => {
+      // Clicking the page you are on would otherwise push a history entry that
+      // goes nowhere, so Back would appear dead.
+      if (index === pageIndex) return;
+      const params = new URLSearchParams(searchParams);
+      if (index <= 0) params.delete('page');
+      else params.set('page', String(index + 1));
+      const url = `${pathname}?${params.toString()}`;
+      if (replace) router.replace(url);
+      else router.push(url);
+    },
+    [searchParams, pathname, router, pageIndex]
+  );
+
+  const listPage = useCallback(
+    (cfg: ConnectionConfig, cursor: string | null) =>
+      listStorageFiles(cfg, currentPath, {
+        cursor,
+        limit: pageSize,
+        // No cap when forcing: a cap could sit just below the subfolders you
+        // are looking for.
+        ...(forceFullScan ? { bufferThreshold: Number.MAX_SAFE_INTEGER } : {}),
+      }),
+    [currentPath, pageSize, forceFullScan]
+  );
+
   const fetchPage = useCallback(
     async (cursor: string | null) => {
       if (!config) return;
@@ -196,15 +229,7 @@ function PageContent() {
           mode: newMode,
           folders,
           foldersTruncated: truncated,
-        } = await listStorageFiles(config, currentPath, {
-          cursor,
-          limit: pageSize,
-          // No cap when forcing: a cap could sit just below the subfolders you
-          // are looking for.
-          ...(forceFullScan
-            ? { bufferThreshold: Number.MAX_SAFE_INTEGER }
-            : {}),
-        });
+        } = await listPage(config, cursor);
         modeRef.current = newMode;
         setMode(newMode);
         // Buffered walked the whole folder, so the total costs nothing.
@@ -229,24 +254,101 @@ function PageContent() {
         setIsLoading(false);
       }
     },
-    [config, currentPath, pageSize, forceFullScan]
+    [config, listPage]
   );
+
+  /**
+   * A `?page=N` deep link (or back/forward into one) arrives with no cursor
+   * stack, so page N cannot be fetched directly. Buffered folders slice
+   * locally, so page 1 already holds it. Cursor folders have to be walked
+   * forward one request at a time: `startAfter` is positional and there is no
+   * way to jump.
+   */
+  const restorePage = useCallback(
+    async (target: number) => {
+      if (!config) return;
+      setIsLoading(true);
+      setError(null);
+      let stack: (string | null)[] = [null];
+      let buffered = false;
+      try {
+        // The walk lists pages 0..target-1 only for the cursor each one hands
+        // to the next; fetchPage below is what lands on page `target`.
+        // ponytail: a buffered folder pays one throwaway listing here, since
+        // the mode is only known once the first listing comes back.
+        ({ stack, buffered } = await walkCursorStack(
+          (cursor) => listPage(config, cursor),
+          target
+        ));
+      } catch (err) {
+        setError(
+          `Failed to load files. Check your connection settings. ${err}`
+        );
+        setFiles([]);
+        setNextCursor(null);
+        setIsLoading(false);
+        toast.error('Failed to load files');
+        return;
+      }
+      setCursorStack(stack);
+      if (!buffered && stack.length - 1 < target) {
+        // Fewer pages exist than the link claims — objects were removed since
+        // it was made, and S3 cursors are positional, not a snapshot. Land on
+        // the last real page rather than an empty one, and correct the URL in
+        // place so Prev/Next stay consistent. The effect refires and fetches.
+        setIsLoading(false);
+        goToPage(stack.length - 1, true);
+        return;
+      }
+      await fetchPage(stack[stack.length - 1]);
+    },
+    [config, listPage, fetchPage, goToPage]
+  );
+
+  const pathRef = useRef(currentPath);
 
   useEffect(() => {
     if (!config) return;
+    const pathChanged = pathRef.current !== currentPath;
+    pathRef.current = currentPath;
+    if (pathChanged) {
+      // Browser back/forward and manual URL edits land here without going
+      // through handleNavigate, so this effect resets paging itself instead
+      // of relying on the imperative resetPaging() call in the click handler.
+      setCursorStack([null]);
+      setNextCursor(null);
+      setFolderCount(null);
+      setPinnedFolders([]);
+      setFoldersTruncated(false);
+      setForceFullScan(false);
+      modeRef.current = null;
+      setMode(null);
+      // Back into a `?path=x&page=3` entry throws away the stack with the
+      // folder, so the new folder's page 3 has to be walked to.
+      // set-state-in-effect: restorePage is a loader like fetchPage below, and
+      // its setIsLoading is what tells the table to show a skeleton.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (pageIndex > 0) restorePage(pageIndex);
+      else fetchPage(null);
+      return;
+    }
     // Buffered folders sit in memory and page as a local slice, so a pageIndex
     // change must not trigger another round trip.
     if (modeRef.current === 'buffered') return;
-    fetchPage(cursorStack[pageIndex] ?? null);
+    const cursor = cursorStack[pageIndex];
+    if (cursor === undefined) return void restorePage(pageIndex);
+    fetchPage(cursor);
     // cursorStack is omitted on purpose: goNext pushes a cursor and bumps
     // pageIndex in one tick, so depending on both would double-fetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config, currentPath, pageSize, pageIndex, forceFullScan]);
 
-  /** Back to page 1: folder nav, page-size change, manual refresh. */
+  /**
+   * Back to page 1: folder nav, page-size change, manual refresh. Callers own
+   * the URL side (`page` removal), since they each push it in one go.
+   */
   const resetPaging = () => {
     setCursorStack([null]);
-    setPageIndex(0);
     setNextCursor(null);
     setFolderCount(null); // a count belongs to one folder, never carry it over
     setPinnedFolders([]); // folders belong to one directory too
@@ -264,6 +366,7 @@ function PageContent() {
   const handleScanAll = () => {
     resetPaging();
     setForceFullScan(true);
+    if (pageIndex > 0) goToPage(0);
   };
 
   const handleCount = async () => {
@@ -301,8 +404,11 @@ function PageContent() {
   // for a frame before the refetch lands.
   const visibleFiles = useMemo(() => {
     if (mode === 'cursor') {
-      // Folders stay pinned on every page. Drop any the page also holds so they
-      // do not appear twice.
+      // Page 1 only: the folders come from page 1's discovery walk, so
+      // prepending them to page 2+ would repeat rows the user already saw and
+      // push the genuine page-2 items down. Page 2+ shows exactly the server's
+      // page. Drop any folder the page already holds so it is not listed twice.
+      if (pageIndex > 0) return filteredFiles;
       const shown = pinnedFolders.filter(matchesSearch);
       const pinnedIds = new Set(shown.map((f) => f.id));
       return [...shown, ...filteredFiles.filter((f) => !pinnedIds.has(f.id))];
@@ -316,19 +422,33 @@ function PageContent() {
       ? nextCursor !== null
       : (pageIndex + 1) * pageSize < filteredFiles.length;
 
+  // Null means "unknown": cursor mode only learns the total if the user asks
+  // for a count, and a capped count is a floor, not a total. The pager renders
+  // a growing strip in that case rather than inventing a last page.
+  const totalPages =
+    mode === 'cursor'
+      ? folderCount && !folderCount.capped
+        ? Math.max(1, Math.ceil(folderCount.count / pageSize))
+        : null
+      : Math.max(1, Math.ceil(filteredFiles.length / pageSize));
+
   const goNext = () => {
     if (!hasNextPage) return;
     // Buffered pages are slices: no cursor to record, no refetch.
-    if (isBuffered) return setPageIndex((i) => i + 1);
-    if (!nextCursor) return;
-    setCursorStack((s) => [...s.slice(0, pageIndex + 1), nextCursor]);
-    setPageIndex((i) => i + 1);
+    if (!isBuffered) {
+      if (!nextCursor) return;
+      setCursorStack((s) => [...s.slice(0, pageIndex + 1), nextCursor]);
+    }
+    goToPage(pageIndex + 1);
   };
-  const goPrev = () => setPageIndex((i) => Math.max(0, i - 1));
+  const goPrev = () => {
+    if (pageIndex > 0) goToPage(pageIndex - 1);
+  };
 
   const handleSearch = (searchtext: string) => {
     setSearchQuery(searchtext);
-    if (isBuffered) setPageIndex(0); // filtering reflows the local pages
+    // filtering reflows the local pages
+    if (isBuffered && pageIndex > 0) goToPage(0);
   };
   const handleRefresh = () => {
     setSearchQuery('');
@@ -336,6 +456,7 @@ function PageContent() {
       fetchPage(null); // already on page 1, so the effect will not refire
     } else {
       resetPaging();
+      goToPage(0);
     }
   };
 
@@ -352,7 +473,12 @@ function PageContent() {
     fetchBookmarks(newConfig);
     const params = new URLSearchParams(searchParams);
     if (newConfig.id) params.set('conn', String(newConfig.id));
-    if (!keepPath) params.delete('path');
+    // keepPath is the `?conn=` reload restore, where `page` is part of the same
+    // link and must survive. A connect you click starts at the bucket root.
+    if (!keepPath) {
+      params.delete('path');
+      params.delete('page');
+    }
     router.push(`${pathname}?${params.toString()}`);
   };
 
@@ -392,6 +518,7 @@ function PageContent() {
       const cleanPath = path.startsWith('/') ? path.substring(1) : path;
       params.set('path', cleanPath);
     }
+    params.delete('page'); // a new folder always opens on page 1
     router.push(`${pathname}?${params.toString()}`);
   };
 
@@ -558,11 +685,16 @@ function PageContent() {
                   pageIndex={pageIndex}
                   hasNextPage={hasNextPage}
                   hasPrevPage={pageIndex > 0}
+                  totalPages={totalPages}
                   onNext={goNext}
                   onPrev={goPrev}
+                  onGoToPage={goToPage}
                   onPageSizeChange={(size) => {
-                    setPageSize(size);
                     resetPaging();
+                    const params = new URLSearchParams(searchParams);
+                    params.set('size', String(size));
+                    params.delete('page'); // a resize reflows every page boundary
+                    router.push(`${pathname}?${params.toString()}`);
                   }}
                   folderCount={folderCount}
                   isCounting={isCounting}
