@@ -1,4 +1,25 @@
+## [1.3.3] - 2026-08-12
+
+### 🚀 Features
+
+- *(browser)* Put page and size in the URL, add numbered pages
+- *(browser)* Create, rename and delete folders
+- *(errors)* Readable error messages with a report address
+
+### 🐛 Bug Fixes
+
+- *(docker)* Install ca-certificates for OpenDAL's TLS client
+- *(storage)* Reuse S3 operators with retry and timeout
+- *(connections)* Update instead of duplicating, add test and disconnect
+
+### 📚 Documentation
+
+- :bookmark: change package.json version to 1.3.3
 ## [1.3.1] - 2026-08-11
+
+### 🚀 Features
+
+- :memo: Add changelog entry for 1.3.1
 
 ### 🐛 Bug Fixes
 
