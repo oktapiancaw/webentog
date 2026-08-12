@@ -42,6 +42,7 @@ import {
   uploadFiles,
 } from '@/app/actions/object-management';
 import { validateObjectName } from '@/lib/utils';
+import { toastError } from '@/lib/errors';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
 import {
@@ -129,8 +130,7 @@ export function SearchBrowser({
       onRefresh?.();
       toast.success(`Created ${name}`);
     } catch (error) {
-      console.error(error);
-      toast.error('Failed to create folder');
+      toastError(error, `Could not create the folder "${name}".`);
     } finally {
       setIsCreating(false);
     }
@@ -140,7 +140,7 @@ export function SearchBrowser({
     e.preventDefault();
 
     if (files.length === 0) {
-      toast.error('Please select at least one file.');
+      toast.error('Pick at least one file to upload.');
       return;
     }
 
@@ -162,8 +162,7 @@ export function SearchBrowser({
         toast.success('Uploaded successfully!');
       }
     } catch (error) {
-      console.error(error);
-      toast.error('Upload failed');
+      toastError(error, 'Could not upload those files.');
     }
   };
   return (

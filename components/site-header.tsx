@@ -23,6 +23,7 @@ import { ChevronRight, Copy, Check, PencilIcon, XIcon } from 'lucide-react';
 import { Moon, Sun, LogOut } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { toastError } from '@/lib/errors';
 import { useRouter } from 'next/navigation';
 import {
   DropdownMenu,
@@ -84,8 +85,7 @@ export function SiteHeader({
       router.push('/login');
       router.refresh();
     } catch (error) {
-      toast.error('Failed to logout');
-      console.error(error);
+      toastError(error, 'Could not log you out.');
     }
   };
 
@@ -103,7 +103,7 @@ export function SiteHeader({
       : currentPath;
 
     if (!(await copyToClipboard(fullPath))) {
-      toast.error('Copy failed');
+      toast.error('Could not copy to the clipboard.');
       return;
     }
     setCopied(true);

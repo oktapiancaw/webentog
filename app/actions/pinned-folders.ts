@@ -50,7 +50,7 @@ export async function pinFolder(
       if (existing) return { id: existing.id };
     }
     console.error('Pin Folder Error:', error);
-    throw new Error('Failed to pin folder.');
+    throw new Error('Could not pin that folder.');
   }
 }
 
@@ -60,7 +60,7 @@ export async function unpinFolder(id: number): Promise<{ success: true }> {
     return { success: true };
   } catch (error) {
     console.error('Unpin Folder Error:', error);
-    throw new Error('Failed to unpin folder.');
+    throw new Error('Could not unpin that folder.');
   }
 }
 

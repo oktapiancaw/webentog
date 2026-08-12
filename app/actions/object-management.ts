@@ -21,12 +21,23 @@ import {
   classifyVersionListFailure,
   cursorAfterKey,
   fileTypeFromName,
+  explainError,
   formatStorage,
   isPermissionDenied,
   replaceLastSegment,
   validateObjectName,
   type FileType,
 } from '@/lib/utils';
+
+/**
+ * Keeps the real cause instead of flattening every storage failure into the
+ * same sentence. A denied credential and an unreachable endpoint need
+ * different things from the user, and the client only ever sees this message —
+ * React strips server error text from production bundles.
+ */
+function storageError(error: unknown, fallback: string): Error {
+  return new Error(explainError(error, fallback).message);
+}
 
 export interface ConnectionConfig {
   id?: number;
@@ -87,10 +98,7 @@ export async function saveConnection(config: ConnectionConfig) {
     return { id: result.lastInsertRowid };
   } catch (error) {
     console.error('Save Connection Error:', error);
-    throw error instanceof Error &&
-      error.message.startsWith('This connection no longer exists')
-      ? error
-      : new Error('Failed to save connection.');
+    throw storageError(error, 'Could not save that connection.');
   }
 }
 
@@ -125,7 +133,8 @@ export async function testConnection(
     }
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Could not connect.',
+      error: explainError(error, 'Could not connect with these settings.')
+        .message,
     };
   }
 }
@@ -149,7 +158,7 @@ export async function deleteConnection(id: number) {
     return { success: true };
   } catch (error) {
     console.error('Delete Connection Error:', error);
-    throw new Error('Failed to delete connection.');
+    throw new Error('Could not delete that connection.');
   }
 }
 export async function uploadFiles(
@@ -160,14 +169,14 @@ export async function uploadFiles(
   const op = getOperator(config);
 
   const files = formData.getAll('files') as File[];
-  if (!files.length) throw new Error('No files provided');
+  if (!files.length) throw new Error('No files were provided.');
 
   const results = [];
   const folderPath_ = folderPath.endsWith('/') ? folderPath : folderPath + '/';
 
   for (const file of files) {
     if (file.size > 10 * 1024 * 1024)
-      throw new Error(`${file.name} is too large`);
+      throw new Error(`${file.name} is larger than the 10MB upload limit.`);
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const path = `${folderPath_}${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
@@ -320,7 +329,7 @@ export async function listStorageFiles(
     };
   } catch (error) {
     console.error('OpenDAL Error:', error);
-    throw new Error('Failed to connect or list files.');
+    throw storageError(error, 'Could not list this folder.');
   }
 }
 
@@ -351,7 +360,7 @@ export async function countFolderObjects(
     return { count, capped: count >= maxScan };
   } catch (error) {
     console.error('Count Objects Error:', error);
-    throw new Error('Failed to count objects.');
+    throw storageError(error, 'Could not count this folder.');
   }
 }
 
@@ -364,7 +373,7 @@ export async function getDownloadUrl(config: ConnectionConfig, path: string) {
     return req.url;
   } catch (error) {
     console.error('Presign URL Error:', error);
-    throw new Error('Failed to generate download link.');
+    throw storageError(error, 'Could not generate a download link.');
   }
 }
 
@@ -402,7 +411,7 @@ export async function getObjectMetadata(
     };
   } catch (error) {
     console.error('Stat Object Error:', error);
-    throw new Error('Failed to read object metadata.');
+    throw storageError(error, 'Could not read this object.');
   }
 }
 
@@ -529,7 +538,7 @@ export async function listObjectVersions(
     }
 
     console.error('List Versions Error:', error);
-    throw new Error('Failed to list object versions.');
+    throw storageError(error, 'Could not list versions of this object.');
   }
 }
 
@@ -573,7 +582,7 @@ export async function restoreObjectVersion(
     return { success: true };
   } catch (error) {
     console.error('Restore Version Error:', error);
-    throw new Error('Failed to restore version.');
+    throw storageError(error, 'Could not restore that version.');
   }
 }
 
@@ -614,7 +623,7 @@ export async function saveObjectVersionAs(
     throw error instanceof Error &&
       error.message.startsWith('An object already exists')
       ? error
-      : new Error('Failed to save version as a new object.');
+      : storageError(error, 'Could not save that version as a new object.');
   }
 }
 
@@ -628,7 +637,7 @@ export async function deleteFile(config: ConnectionConfig, path: string) {
     throw new Error(
       isPermissionDenied(error)
         ? 'These credentials cannot delete objects.'
-        : 'Failed to delete file.'
+        : explainError(error, 'Could not delete that file.').message
     );
   }
 }
@@ -640,7 +649,7 @@ export async function createFolder(config: ConnectionConfig, path: string) {
     return { success: true };
   } catch (error) {
     console.error('Create Folder Error:', error);
-    throw new Error('Failed to create folder.');
+    throw storageError(error, 'Could not create that folder.');
   }
 }
 
@@ -660,7 +669,7 @@ export async function deleteFolder(config: ConnectionConfig, path: string) {
     throw new Error(
       isPermissionDenied(error)
         ? 'These credentials cannot delete objects.'
-        : 'Failed to delete folder.'
+        : explainError(error, 'Could not delete that folder.').message
     );
   }
 }
@@ -769,7 +778,7 @@ export async function renameFile(
       throw new Error('These credentials cannot rename this object.');
     throw error instanceof Error && error.message.startsWith('An object named')
       ? error
-      : new Error('Failed to rename file.');
+      : storageError(error, 'Could not rename that file.');
   }
 }
 

@@ -46,6 +46,7 @@ import { SearchBrowser } from '@/components/search-browser';
 import { Button } from '@/components/ui/button';
 import { ScanSearch } from 'lucide-react';
 import { toast } from 'sonner';
+import { toastError } from '@/lib/errors';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { FilePreview } from '@/components/file-preview';
 import { VersionHistoryDialog } from '@/components/version-history-dialog';
@@ -58,6 +59,7 @@ import {
   removePinsUnder,
 } from '@/lib/storage-mode';
 import {
+  explainError,
   getLastNameFromPath,
   parsePagingParams,
   walkCursorStack,
@@ -140,8 +142,7 @@ function PageContent() {
     try {
       setBookmarkedFolders(await loadPins(cfg));
     } catch (err) {
-      console.error('Failed to load pinned folders:', err);
-      toast.error('Failed to load pinned folders');
+      toastError(err, 'Could not load your pinned folders.');
     } finally {
       setIsBookmarksLoading(false);
     }
@@ -173,8 +174,7 @@ function PageContent() {
         toast.success('Folder pinned');
       }
     } catch (err) {
-      console.error('Failed to toggle pin:', err);
-      toast.error('Failed to update pin');
+      toastError(err, 'Could not update that pin.');
     }
   };
 
@@ -183,8 +183,7 @@ function PageContent() {
       await removePin(id);
       setBookmarkedFolders((prev) => prev.filter((p) => p.id !== id));
     } catch (err) {
-      console.error('Failed to remove pin:', err);
-      toast.error('Failed to remove pin');
+      toastError(err, 'Could not remove that pin.');
     }
   };
 
@@ -248,12 +247,10 @@ function PageContent() {
         setFiles(items.map(toFileItem));
         setNextCursor(newCursor);
       } catch (err) {
-        setError(
-          `Failed to load files. Check your connection settings. ${err}`
-        );
+        setError(explainError(err, 'Could not load this folder.').message);
         setFiles([]);
         setNextCursor(null);
-        toast.error('Failed to load files');
+        toastError(err, 'Could not load this folder.');
       } finally {
         setIsLoading(false);
       }
@@ -285,13 +282,11 @@ function PageContent() {
           target
         ));
       } catch (err) {
-        setError(
-          `Failed to load files. Check your connection settings. ${err}`
-        );
+        setError(explainError(err, 'Could not load this folder.').message);
         setFiles([]);
         setNextCursor(null);
         setIsLoading(false);
-        toast.error('Failed to load files');
+        toastError(err, 'Could not load this folder.');
         return;
       }
       setCursorStack(stack);
@@ -379,8 +374,7 @@ function PageContent() {
     try {
       setFolderCount(await countFolderObjects(config, currentPath));
     } catch (err) {
-      console.error('Failed to count objects:', err);
-      toast.error('Failed to count objects');
+      toastError(err, 'Could not count this folder.');
     } finally {
       setIsCounting(false);
     }
@@ -526,8 +520,7 @@ function PageContent() {
       if (viewingFile?.id === file.id) closePreview();
       handleRefresh();
     } catch (error) {
-      console.error('Failed to delete file:', error);
-      toast.error('Failed to delete file');
+      toastError(error, `Could not delete ${file.name}.`);
     }
   };
 
@@ -551,8 +544,7 @@ function PageContent() {
       if (viewingFile?.id.startsWith(file.id)) closePreview();
       handleRefresh();
     } catch (error) {
-      console.error('Failed to delete folder:', error);
-      toast.error('Failed to delete folder');
+      toastError(error, `Could not delete ${file.name}.`);
     }
   };
 
@@ -574,8 +566,7 @@ function PageContent() {
       if (viewingFile?.id.startsWith(file.id)) closePreview();
       handleRefresh();
     } catch (error) {
-      console.error('Failed to rename:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to rename');
+      toastError(error, `Could not rename ${file.name}.`);
     }
   };
 
@@ -606,8 +597,7 @@ function PageContent() {
       await downloadObject(config, fileId);
       toast.success(`Downloading ${fileName}...`);
     } catch (error) {
-      console.error('Failed to download file:', error);
-      toast.error('Failed to download file. Please check your connection.');
+      toastError(error, `Could not download ${fileName}.`);
     }
   };
   const handleDownloadFolder = async (path: string) => {
@@ -639,8 +629,9 @@ function PageContent() {
 
       toast.success('Download started!', { id: 'zip-toast' });
     } catch (error) {
-      console.error('Failed to download folder:', error);
-      toast.error('Failed to download folder.', { id: 'zip-toast' });
+      toastError(error, 'Could not build the ZIP for this folder.', {
+        id: 'zip-toast',
+      });
     }
   };
 
@@ -663,8 +654,7 @@ function PageContent() {
       const url = await getDownloadUrl(config, file.id);
       setViewingUrl(url);
     } catch (error) {
-      console.error('Failed to load preview:', error);
-      toast.error('Failed to load preview');
+      toastError(error, `Could not open a preview of ${file.name}.`);
     } finally {
       setIsViewingLoading(false);
     }

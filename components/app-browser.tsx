@@ -170,7 +170,9 @@ export function StorageBrowser({
 
   const copyPath = async (path: string) => {
     const ok = await copyToClipboard(path);
-    toast[ok ? 'success' : 'error'](ok ? 'Path copied' : 'Copy failed');
+    toast[ok ? 'success' : 'error'](
+      ok ? 'Path copied' : 'Could not copy to the clipboard.'
+    );
   };
 
   const startRename = (file: FileItem) => {

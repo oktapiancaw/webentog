@@ -17,6 +17,8 @@
 import { useEffect, useState } from 'react';
 import { Loader2, RotateCcw, SaveIcon } from 'lucide-react';
 import { toast } from 'sonner';
+import { toastError } from '@/lib/errors';
+import { explainError } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -97,7 +99,7 @@ export function VersionHistoryDialog({
       setLikelyVersioned(result.likelyVersioned);
       setUnavailable(result.unavailable);
     } catch (err) {
-      setError((err as Error).message);
+      setError(explainError(err, 'Could not load version history.').message);
       setVersions([]);
     } finally {
       setLoading(false);
@@ -119,7 +121,7 @@ export function VersionHistoryDialog({
       })
       .catch((err) => {
         if (!active) return;
-        setError((err as Error).message);
+        setError(explainError(err, 'Could not load version history.').message);
         setVersions([]);
       })
       .finally(() => {
@@ -141,7 +143,7 @@ export function VersionHistoryDialog({
       onRestored();
       await load(file); // stay open so the new current version is visible
     } catch (err) {
-      toast.error((err as Error).message);
+      toastError(err, 'Could not restore that version.');
     } finally {
       setBusyVersion(null);
     }
@@ -161,7 +163,7 @@ export function VersionHistoryDialog({
       setSaveAsRow(null);
       onRestored(); // the new object should show up in the listing
     } catch (err) {
-      toast.error((err as Error).message);
+      toastError(err, 'Could not save that version as a new object.');
     } finally {
       setBusyVersion(null);
     }

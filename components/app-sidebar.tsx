@@ -79,7 +79,8 @@ import {
   removeConnection,
 } from '@/lib/storage-mode';
 import { toast } from 'sonner';
-import { cn, getLastNameFromPath } from '@/lib/utils';
+import { toastError } from '@/lib/errors';
+import { cn, explainError, getLastNameFromPath } from '@/lib/utils';
 import { WebEntogLogo } from '@/components/logo';
 import type { ValidatedPinnedFolder } from '@/app/actions/pinned-folders';
 
@@ -194,7 +195,8 @@ export function AppSidebar({
       // itself failing — the server action never got there.
       setTestResult({
         success: false,
-        error: 'Could not reach the server to run a test.',
+        error: explainError(error, 'Could not reach the server to run a test.')
+          .message,
       });
     } finally {
       setIsTesting(false);
@@ -220,8 +222,7 @@ export function AppSidebar({
       setIsSheetOpen(false);
       setFormData(INITIAL_FORM_STATE);
     } catch (error) {
-      console.error(error);
-      toast.error('Failed to save connection.');
+      toastError(error, 'Could not save that connection.');
     } finally {
       setIsSaving(false);
     }
@@ -238,8 +239,7 @@ export function AppSidebar({
       }
       setConfirmDeleteId(null);
     } catch (error) {
-      console.error(error);
-      toast.error('Failed to delete connection.');
+      toastError(error, 'Could not delete that connection.');
     }
   };
 

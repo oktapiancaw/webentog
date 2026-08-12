@@ -122,6 +122,96 @@ export function isPermissionDenied(error: unknown): boolean {
 }
 
 /**
+ * Text that means the message came from a library, not from us: OpenDAL
+ * flattens request context into it, and React replaces server errors with a
+ * numbered stub. None of it belongs in front of a user.
+ */
+const MACHINE_NOISE =
+  /context: \{|service: s3|reqwest|https?:\/\/|Minified React error|formatProdErrorMessage|\bdigest\b|\n\s+at /i;
+
+/** Wrapping a sentence past this length is a stack trace, not a message. */
+const READABLE_LIMIT = 180;
+
+export interface ExplainedError {
+  /** Safe to show as-is. */
+  message: string;
+  /**
+   * False for things the user caused or can fix — a bad name, a denied
+   * credential. Those do not need a "report this" footer.
+   */
+  unexpected: boolean;
+}
+
+/**
+ * Turns anything thrown into a sentence a person can act on.
+ *
+ * Errors this app raises are already written for humans and pass straight
+ * through. Everything else is matched against the failure shapes that actually
+ * reach users here — a denied credential, an unreachable endpoint, a stripped
+ * server error — and falls back to `fallback` when it is just noise.
+ */
+export function explainError(
+  error: unknown,
+  fallback = 'Something went wrong.'
+): ExplainedError {
+  const raw = error instanceof Error ? error.message : String(error ?? '');
+
+  if (/AccessDenied|PermissionDenied|Forbidden|\b403\b/i.test(raw)) {
+    return {
+      message:
+        'These credentials are not allowed to do that. Check the access policy on the bucket.',
+      unexpected: false,
+    };
+  }
+
+  // OpenDAL reports a dropped or refused connection as "Unexpected
+  // (temporary)" with a reqwest send failure inside.
+  if (
+    /error sending request|Unexpected \(temporary\)|ECONNREFUSED|ETIMEDOUT|Failed to fetch|NetworkError/i.test(
+      raw
+    )
+  ) {
+    return {
+      message:
+        'Could not reach the storage endpoint. It may be down, or the address in this connection may be wrong.',
+      unexpected: true,
+    };
+  }
+
+  if (/\bNotFound\b|\b404\b|does not exist/i.test(raw)) {
+    return {
+      message: 'That object or folder is no longer there. Try refreshing.',
+      unexpected: false,
+    };
+  }
+
+  // React strips server-side messages in production and leaves only a numbered
+  // stub, so there is nothing useful to show beyond "it failed on the server".
+  if (
+    /Minified React error|An error occurred in the Server Components/i.test(raw)
+  ) {
+    return {
+      message: 'The server hit an error handling that request.',
+      unexpected: true,
+    };
+  }
+
+  // Only a real Error carries a message someone wrote. Anything else
+  // stringifies to junk like "[object Object]", which reads as a sentence to
+  // the checks below but means nothing to a user.
+  const curated = error instanceof Error ? raw.trim() : '';
+  if (
+    curated &&
+    curated.length <= READABLE_LIMIT &&
+    !MACHINE_NOISE.test(curated)
+  ) {
+    return { message: curated, unexpected: false };
+  }
+
+  return { message: fallback, unexpected: true };
+}
+
+/**
  * Validates one path segment typed by a user — a new folder name, or the new
  * name in a rename. Returns null when it is fine, else why not.
  *

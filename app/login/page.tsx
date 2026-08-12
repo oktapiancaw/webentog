@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { toastError } from '@/lib/errors';
 import { WebEntogLogo } from '@/components/logo';
 import { getPersistentMode, loginAction } from '../actions/auth';
 
@@ -53,11 +54,10 @@ export default function LoginPage() {
         router.push('/');
         router.refresh();
       } else {
-        toast.error(result.message || 'Login failed');
+        toast.error(result.message || 'Those credentials were not accepted.');
       }
     } catch (error) {
-      toast.error('An unexpected error occurred');
-      console.error(error);
+      toastError(error, 'Could not sign you in right now.');
     } finally {
       setIsLoading(false);
     }
