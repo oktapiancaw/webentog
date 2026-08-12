@@ -109,6 +109,50 @@ export function cursorAfterKey(key: string, isFolder: boolean): string {
   return key.slice(0, -1) + String.fromCharCode(lastByte + 1);
 }
 
+/**
+ * True when a storage error is the endpoint refusing on credentials rather
+ * than anything the app did wrong.
+ *
+ * OpenDAL flattens the cause into the message (`PermissionDenied (permanent)
+ * at delete, context: {...}`), so matching the text is the only handle the
+ * Node binding gives — same approach as [[classifyVersionListFailure]].
+ */
+export function isPermissionDenied(error: unknown): boolean {
+  return /AccessDenied|PermissionDenied|Forbidden|\b403\b/i.test(String(error));
+}
+
+/**
+ * Validates one path segment typed by a user — a new folder name, or the new
+ * name in a rename. Returns null when it is fine, else why not.
+ *
+ * A `/` is the whole point of this check: without it "rename" silently becomes
+ * "move anywhere in the bucket", including out of the folder the user is
+ * looking at. Server actions are a public endpoint, so this runs there too and
+ * not only in the dialog.
+ */
+export function validateObjectName(name: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return 'Name cannot be empty.';
+  if (trimmed === '.' || trimmed === '..') return 'Name cannot be "." or "..".';
+  if (trimmed.includes('/')) return 'Name cannot contain "/".';
+
+  if (/[\u0000-\u001f\u007f]/.test(trimmed))
+    return 'Name cannot contain control characters.';
+  // S3 keys cap at 1024 bytes total; one segment past 255 is a mistake, not a
+  // use case, and leaves room for the prefix.
+  if (new TextEncoder().encode(trimmed).length > 255)
+    return 'Name is too long (max 255 bytes).';
+  return null;
+}
+
+/** Replaces the last segment of `key`, keeping its parent prefix. */
+export function replaceLastSegment(key: string, name: string): string {
+  const stripped = key.endsWith('/') ? key.slice(0, -1) : key;
+  const cut = stripped.lastIndexOf('/');
+  const parent = cut === -1 ? '' : stripped.slice(0, cut + 1);
+  return `${parent}${name}${key.endsWith('/') ? '/' : ''}`;
+}
+
 /** Rows-per-page choices, and the allowlist for `?size=`. */
 export const PAGE_SIZES = [10, 20, 50, 100];
 export const DEFAULT_PAGE_SIZE = 20;

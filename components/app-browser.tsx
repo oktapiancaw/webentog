@@ -34,9 +34,11 @@ import {
   Pin,
   PinOff,
   Sigma,
+  PencilLine,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -59,6 +61,7 @@ import {
   copyToClipboard,
   PAGE_SIZES,
   pageWindow,
+  validateObjectName,
   type FileType,
 } from '@/lib/utils';
 
@@ -83,6 +86,10 @@ interface StorageBrowserProps {
   onView?: (file: FileItem) => void;
   onViewVersions?: (file: FileItem) => void;
   onDelete?: (file: FileItem) => void;
+  /** Recursive — the folder and everything under it. */
+  onDeleteFolder?: (file: FileItem) => void;
+  /** `newName` is a single segment, never a path. */
+  onRename?: (file: FileItem, newName: string) => void;
   /** Keyed by S3 key (FileItem.id), matching what the pins table stores. */
   pinnedPaths?: Set<string>;
   onTogglePin?: (file: FileItem) => void;
@@ -138,6 +145,8 @@ export function StorageBrowser({
   onView,
   onViewVersions,
   onDelete,
+  onDeleteFolder,
+  onRename,
   pinnedPaths,
   onTogglePin,
   pageSize,
@@ -155,9 +164,28 @@ export function StorageBrowser({
 }: StorageBrowserProps) {
   // Same inline confirm as connection deletion in app-sidebar.
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  // Rename swaps the row for an input, reusing the confirm row's mechanic.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+
   const copyPath = async (path: string) => {
     const ok = await copyToClipboard(path);
     toast[ok ? 'success' : 'error'](ok ? 'Path copied' : 'Copy failed');
+  };
+
+  const startRename = (file: FileItem) => {
+    setConfirmDeleteId(null);
+    setRenamingId(file.id);
+    setRenameValue(file.name);
+  };
+
+  const submitRename = (file: FileItem) => {
+    const name = renameValue.trim();
+    setRenamingId(null);
+    if (!name || name === file.name) return;
+    const invalid = validateObjectName(name);
+    if (invalid) return toast.error(invalid);
+    onRename?.(file, name);
   };
 
   const renderRows = () => {
@@ -202,12 +230,16 @@ export function StorageBrowser({
       const isSelected = selectedId === file.id;
 
       if (confirmDeleteId === file.id) {
+        const isFolder = file.type === 'folder';
         return (
           <tr key={file.id} className="border-b last:border-0">
             <td colSpan={4} className="bg-destructive px-4 py-2.5 text-white">
               <div className="flex items-center justify-between gap-3">
                 <span className="min-w-0 truncate text-sm">
-                  Delete <span className="font-mono">{file.name}</span>?
+                  Delete <span className="font-mono">{file.name}</span>
+                  {/* A folder delete is recursive and has no undo, so say so
+                      rather than asking the same question as a file. */}
+                  {isFolder && ' and everything inside it'}?
                 </span>
                 <div className="flex shrink-0 items-center gap-2">
                   <button
@@ -219,12 +251,53 @@ export function StorageBrowser({
                   <button
                     onClick={() => {
                       setConfirmDeleteId(null);
-                      onDelete?.(file);
+                      if (isFolder) onDeleteFolder?.(file);
+                      else onDelete?.(file);
                     }}
                     className="rounded-sm bg-white px-2 py-0.5 text-xs font-medium text-destructive"
                   >
                     Yes
                   </button>
+                </div>
+              </div>
+            </td>
+          </tr>
+        );
+      }
+
+      if (renamingId === file.id) {
+        return (
+          <tr key={file.id} className="border-b last:border-0 bg-accent">
+            <td colSpan={4} className="px-4 py-2">
+              <div className="flex items-center gap-3">
+                {getFileIcon(file.type)}
+                <Input
+                  autoFocus
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') submitRename(file);
+                    if (e.key === 'Escape') setRenamingId(null);
+                  }}
+                  className="h-7 font-mono text-sm"
+                  aria-label={`Rename ${file.name}`}
+                />
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7"
+                    onClick={() => setRenamingId(null)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="h-7"
+                    onClick={() => submitRename(file)}
+                  >
+                    Save
+                  </Button>
                 </div>
               </div>
             </td>
@@ -299,6 +372,9 @@ export function StorageBrowser({
                       <DropdownMenuItem onClick={() => copyPath(file.fullPath)}>
                         <Share2Icon /> Copy path
                       </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => startRename(file)}>
+                        <PencilLine /> Rename
+                      </DropdownMenuItem>
                     </>
                   ) : (
                     <>
@@ -316,26 +392,28 @@ export function StorageBrowser({
                       >
                         <Download /> Download
                       </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => startRename(file)}>
+                        <PencilLine /> Rename
+                      </DropdownMenuItem>
                     </>
                   )}
                 </DropdownMenuGroup>
 
                 <DropdownMenuSeparator />
 
-                {file.type === 'folder' ? (
+                {file.type === 'folder' && (
                   <DropdownMenuItem
                     onClick={() => onDownloadFolder?.(file.fullPath)}
                   >
                     <Download /> Download (.zip)
                   </DropdownMenuItem>
-                ) : (
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onClick={() => setConfirmDeleteId(file.id)}
-                  >
-                    <TrashIcon /> Delete
-                  </DropdownMenuItem>
                 )}
+                <DropdownMenuItem
+                  variant="destructive"
+                  onClick={() => setConfirmDeleteId(file.id)}
+                >
+                  <TrashIcon /> Delete
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </td>

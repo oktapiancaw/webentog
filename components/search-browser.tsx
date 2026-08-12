@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   CloudUpload,
+  FolderPlusIcon,
   RefreshCwIcon,
   SearchIcon,
   UploadIcon,
@@ -35,7 +36,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from './ui/dialog';
-import { ConnectionConfig, uploadFiles } from '@/app/actions/object-management';
+import {
+  ConnectionConfig,
+  createFolder,
+  uploadFiles,
+} from '@/app/actions/object-management';
+import { validateObjectName } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
 import {
@@ -84,6 +90,9 @@ export function SearchBrowser({
   searchesWholeFolder = true,
 }: SearchBrowserProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isFolderDialogOpen, setIsFolderDialogOpen] = useState(false);
+  const [folderName, setFolderName] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -98,6 +107,33 @@ export function SearchBrowser({
 
   const handleResetFiles = () => {
     setFiles([]);
+  };
+
+  const handleCreateFolder = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const name = folderName.trim();
+    const invalid = validateObjectName(name);
+    if (invalid) return toast.error(invalid);
+
+    // createDir needs the trailing slash to write a directory marker rather
+    // than a zero-byte object that lists as a file.
+    const base =
+      currentPath === '/' ? '' : `${currentPath.replace(/\/$/, '')}/`;
+
+    setIsCreating(true);
+    try {
+      await createFolder(config, `${base}${name}/`);
+      setFolderName('');
+      setIsFolderDialogOpen(false);
+      onRefresh?.();
+      toast.success(`Created ${name}`);
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to create folder');
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const handleUploadSubmit = async (e: React.FormEvent) => {
@@ -162,6 +198,44 @@ export function SearchBrowser({
       <Button variant="outline" onClick={() => onSearch?.(searchText)}>
         Search
       </Button>
+      <Dialog open={isFolderDialogOpen} onOpenChange={setIsFolderDialogOpen}>
+        <DialogTrigger asChild>
+          <Button variant="outline" title="New folder">
+            <FolderPlusIcon className="size-4" />
+          </Button>
+        </DialogTrigger>
+
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>New folder</DialogTitle>
+            <span className="text-sm text-muted-foreground">
+              Inside:{' '}
+              <span className="font-mono text-foreground">{currentPath}</span>
+            </span>
+          </DialogHeader>
+
+          <form className="grid gap-4" onSubmit={handleCreateFolder}>
+            <Input
+              autoFocus
+              value={folderName}
+              onChange={(e) => setFolderName(e.target.value)}
+              placeholder="Folder name"
+              className="font-mono text-sm"
+              aria-label="Folder name"
+            />
+            <DialogFooter className="sm:justify-between">
+              <DialogClose asChild>
+                <Button variant="secondary" type="button">
+                  Close
+                </Button>
+              </DialogClose>
+              <Button type="submit" disabled={!folderName.trim() || isCreating}>
+                Create
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogTrigger asChild>
           <Button variant="default">

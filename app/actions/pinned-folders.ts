@@ -65,6 +65,42 @@ export async function unpinFolder(id: number): Promise<{ success: true }> {
 }
 
 /**
+ * Deletes the pin for `path` and any pin nested under it, for when the folder
+ * itself is gone. Returns the removed paths so the caller can drop them from
+ * local state without waiting for a refetch.
+ *
+ * Filters in JS rather than a SQL LIKE: pin counts per connection are small
+ * (`getPinnedFolders` already full-scans), and an S3 key can contain a literal
+ * `%` or `_`, which LIKE would silently treat as a wildcard.
+ */
+export async function unpinFoldersUnder(
+  connectionId: number,
+  path: string
+): Promise<string[]> {
+  try {
+    const db = getDb();
+    const rows = db
+      .prepare('SELECT id, path FROM pinned_folders WHERE connection_id = ?')
+      .all(connectionId) as { id: number; path: string }[];
+
+    const prefix = path.endsWith('/') ? path : `${path}/`;
+    const doomed = rows.filter(
+      (row) => row.path === path || row.path.startsWith(prefix)
+    );
+    if (doomed.length === 0) return [];
+
+    const del = db.prepare('DELETE FROM pinned_folders WHERE id = ?');
+    for (const row of doomed) del.run(row.id);
+    return doomed.map((row) => row.path);
+  } catch (error) {
+    // The folder is already deleted either way; a stale pin renders as
+    // "missing", which is the state this whole feature is designed around.
+    console.error('Unpin Folders Under Error:', error);
+    return [];
+  }
+}
+
+/**
  * Checks which of `paths` still exist in the bucket.
  *
  * Both storage backends call it: where a bookmark lives is a client concern,

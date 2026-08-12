@@ -25,6 +25,7 @@ import {
   getPinnedFolders,
   pinFolder,
   unpinFolder,
+  unpinFoldersUnder,
   validateFolderPaths,
   type PinnedFolder,
   type ValidatedPinnedFolder,
@@ -198,6 +199,36 @@ function triggerDownload(href: string, fileName?: string) {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+}
+
+/**
+ * Drops the pin for a deleted folder and any pin nested under it. Returns the
+ * removed paths.
+ *
+ * Non-persistent mode has no foreign keys, so it cascades by hand — the same
+ * thing `removeConnection` does for its pins.
+ */
+export async function removePinsUnder(
+  connectionId: number,
+  path: string
+): Promise<string[]> {
+  if (await isPersistentStorage()) return unpinFoldersUnder(connectionId, path);
+
+  const prefix = path.endsWith('/') ? path : `${path}/`;
+  const rows = read<PinnedFolder>(PINS_KEY);
+  const doomed = rows.filter(
+    (pin) =>
+      pin.connection_id === connectionId &&
+      (pin.path === path || pin.path.startsWith(prefix))
+  );
+  if (doomed.length === 0) return [];
+
+  const gone = new Set(doomed.map((pin) => pin.id));
+  write(
+    PINS_KEY,
+    rows.filter((pin) => !gone.has(pin.id))
+  );
+  return doomed.map((pin) => pin.path);
 }
 
 export async function removePin(id: number): Promise<void> {

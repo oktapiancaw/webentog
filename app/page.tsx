@@ -35,9 +35,12 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import {
   countFolderObjects,
   deleteFile,
+  deleteFolder,
   getDownloadUrl,
   getObjectMetadata,
   listStorageFiles,
+  renameFile,
+  renameFolder,
 } from './actions/object-management';
 import { SearchBrowser } from '@/components/search-browser';
 import { Button } from '@/components/ui/button';
@@ -52,6 +55,7 @@ import {
   downloadObject,
   loadPins,
   removePin,
+  removePinsUnder,
 } from '@/lib/storage-mode';
 import {
   getLastNameFromPath,
@@ -505,6 +509,54 @@ function PageContent() {
     }
   };
 
+  /**
+   * Recursive, and cascades the pin: a bookmark pointing into a folder we just
+   * wiped would render as "missing" for no reason. Local state is filtered too
+   * so the sidebar updates without waiting for the next pin refetch.
+   */
+  const handleDeleteFolder = async (file: FileItem) => {
+    if (!config) return;
+    try {
+      await deleteFolder(config, file.id);
+      if (config.id) {
+        const removed = await removePinsUnder(config.id, file.id);
+        if (removed.length > 0) {
+          const gone = new Set(removed);
+          setBookmarkedFolders((prev) => prev.filter((p) => !gone.has(p.path)));
+        }
+      }
+      toast.success(`Deleted ${file.name}`);
+      if (viewingFile?.id.startsWith(file.id)) closePreview();
+      handleRefresh();
+    } catch (error) {
+      console.error('Failed to delete folder:', error);
+      toast.error('Failed to delete folder');
+    }
+  };
+
+  /**
+   * `newName` is one segment; the server derives the target key from the
+   * existing one, so a rename can never become a move.
+   *
+   * A pinned folder keeps its old path — the pin is left stale and shows as
+   * "missing" until re-pinned. Cascading a rename into the pins table is a
+   * follow-up, not part of shipping rename itself.
+   */
+  const handleRename = async (file: FileItem, newName: string) => {
+    if (!config) return;
+    const isFolder = file.type === 'folder';
+    try {
+      if (isFolder) await renameFolder(config, file.id, newName);
+      else await renameFile(config, file.id, newName);
+      toast.success(`Renamed to ${newName}`);
+      if (viewingFile?.id.startsWith(file.id)) closePreview();
+      handleRefresh();
+    } catch (error) {
+      console.error('Failed to rename:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to rename');
+    }
+  };
+
   const handleNavigate = (path: string) => {
     setSearchText('');
     setSearchQuery('');
@@ -679,6 +731,8 @@ function PageContent() {
                   onView={handleView}
                   onViewVersions={handleViewVersions}
                   onDelete={handleDelete}
+                  onDeleteFolder={handleDeleteFolder}
+                  onRename={handleRename}
                   pinnedPaths={pinnedPaths}
                   onTogglePin={handleTogglePin}
                   pageSize={pageSize}

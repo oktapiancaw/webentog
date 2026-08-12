@@ -22,6 +22,9 @@ import {
   cursorAfterKey,
   fileTypeFromName,
   formatStorage,
+  isPermissionDenied,
+  replaceLastSegment,
+  validateObjectName,
   type FileType,
 } from '@/lib/utils';
 
@@ -552,7 +555,11 @@ export async function deleteFile(config: ConnectionConfig, path: string) {
     return { success: true };
   } catch (error) {
     console.error('Delete File Error:', error);
-    throw new Error('Failed to delete file.');
+    throw new Error(
+      isPermissionDenied(error)
+        ? 'These credentials cannot delete objects.'
+        : 'Failed to delete file.'
+    );
   }
 }
 
@@ -564,5 +571,201 @@ export async function createFolder(config: ConnectionConfig, path: string) {
   } catch (error) {
     console.error('Create Folder Error:', error);
     throw new Error('Failed to create folder.');
+  }
+}
+
+/**
+ * Deletes a folder and everything under it.
+ *
+ * `delete` is single-key, so a folder needs `removeAll`. The trailing slash is
+ * enforced because `removeAll('a/b')` would also match a sibling key `a/bc`.
+ */
+export async function deleteFolder(config: ConnectionConfig, path: string) {
+  try {
+    const op = getOperator(config);
+    await op.removeAll(path.endsWith('/') ? path : `${path}/`);
+    return { success: true };
+  } catch (error) {
+    console.error('Delete Folder Error:', error);
+    throw new Error(
+      isPermissionDenied(error)
+        ? 'These credentials cannot delete objects.'
+        : 'Failed to delete folder.'
+    );
+  }
+}
+
+/**
+ * Renames within the current folder. The caller passes a name, not a path, so
+ * a rename cannot turn into a move: the parent prefix comes from `path` here,
+ * and the name is validated the same way the dialog validates it. Server
+ * actions are reachable without the UI, so this is the check that counts.
+ */
+const NO_DELETE_PERMISSION =
+  'These credentials cannot delete objects, and a rename has to delete the original after copying it. Nothing was changed.';
+
+/**
+ * Refuses the rename up front when the credentials cannot delete.
+ *
+ * Rename is copy-then-delete, so read-plus-write-but-no-delete credentials
+ * would copy the object and then fail — leaving a duplicate the same
+ * credentials cannot clean up either. DeleteObject against a key that does not
+ * exist is the probe: the policy check runs before the existence check, so it
+ * returns success when permitted and 403 when not, and removes nothing either
+ * way.
+ *
+ * Any other failure (a network blip) is ignored rather than blocking a rename
+ * that would have worked.
+ */
+async function assertCanDelete(
+  op: InstanceType<typeof Operator>,
+  prefix: string
+) {
+  try {
+    await op.delete(`${prefix}.webentog-delete-probe`);
+  } catch (error) {
+    if (isPermissionDenied(error)) throw new Error(NO_DELETE_PERMISSION);
+    console.error('Delete permission probe failed (ignored):', error);
+  }
+}
+
+/**
+ * Moves one object. S3 has no rename — OpenDAL reports `rename: false` and
+ * `copy: true` for the service — so this is a server-side CopyObject followed
+ * by a delete of the original. No bytes travel through the app.
+ *
+ * Copy first, delete second, on purpose: if it fails in between, the object is
+ * duplicated rather than gone.
+ *
+ * ponytail: single-part copy, which S3 caps at 5GB. Objects past that need a
+ * multipart copy the binding does not expose; they fail loudly here rather
+ * than truncating.
+ */
+async function moveObject(
+  op: InstanceType<typeof Operator>,
+  from: string,
+  to: string
+) {
+  await op.copy(from, to);
+  await op.delete(from);
+}
+
+/** True if anything lives under `prefix`. Stops at the first hit. */
+async function hasAnyChild(
+  op: InstanceType<typeof Operator>,
+  prefix: string
+): Promise<boolean> {
+  const lister = await op.lister(prefix, { limit: 2, recursive: false });
+  let entry;
+  while ((entry = await lister.next()) !== null) {
+    if (entry.path() === prefix) continue; // the directory itself is not a child
+    return true;
+  }
+  return false;
+}
+
+/** The folder a key sits in, with its trailing slash; '' at the bucket root. */
+function parentPrefix(key: string): string {
+  const stripped = key.endsWith('/') ? key.slice(0, -1) : key;
+  const cut = stripped.lastIndexOf('/');
+  return cut === -1 ? '' : stripped.slice(0, cut + 1);
+}
+
+function resolveRename(path: string, newName: string): string {
+  const invalid = validateObjectName(newName);
+  if (invalid) throw new Error(invalid);
+  return replaceLastSegment(path, newName.trim());
+}
+
+export async function renameFile(
+  config: ConnectionConfig,
+  path: string,
+  newName: string
+) {
+  const toPath = resolveRename(path, newName);
+  try {
+    const op = getOperator(config);
+    if (await op.exists(toPath)) {
+      throw new Error(`An object named "${newName.trim()}" already exists.`);
+    }
+    await assertCanDelete(op, parentPrefix(path));
+    await moveObject(op, path, toPath);
+    return { success: true, path: toPath };
+  } catch (error) {
+    console.error('Rename File Error:', error);
+    if (error instanceof Error && error.message === NO_DELETE_PERMISSION)
+      throw error;
+    if (isPermissionDenied(error))
+      throw new Error('These credentials cannot rename this object.');
+    throw error instanceof Error && error.message.startsWith('An object named')
+      ? error
+      : new Error('Failed to rename file.');
+  }
+}
+
+/**
+ * A directory rename is not one operation: every key under the old prefix is
+ * copied to the matching key under the new one and then deleted, sequentially.
+ * Cost scales with object count, not folder size, since the copies are
+ * server-side.
+ *
+ * Sequential rather than Promise.all: a mid-walk failure leaves a legible
+ * partial state instead of hundreds of concurrent calls landing in unknown
+ * order. There is no progress UI and no cancel — same accepted tradeoff as the
+ * full-bucket scan elsewhere in this file.
+ */
+export async function renameFolder(
+  config: ConnectionConfig,
+  path: string,
+  newName: string
+) {
+  const fromPrefix = path.endsWith('/') ? path : `${path}/`;
+  const toPath = resolveRename(fromPrefix, newName);
+  const toPrefix = toPath.endsWith('/') ? toPath : `${toPath}/`;
+
+  try {
+    const op = getOperator(config);
+    // exists() only sees an explicit directory marker, and most S3 folders are
+    // implicit. Renaming onto one would merge the two and overwrite same-named
+    // files with no warning, so probe for any child instead.
+    if (await hasAnyChild(op, toPrefix)) {
+      throw new Error(`A folder named "${newName.trim()}" already exists.`);
+    }
+
+    // Before the first copy: a half-renamed folder is bad, and one the user
+    // cannot delete either is worse.
+    await assertCanDelete(op, fromPrefix);
+
+    const entries = await op.list(fromPrefix, { recursive: true });
+    // An empty folder has nothing to move, so the new prefix needs a marker of
+    // its own or the rename would look like a delete.
+    await op.createDir(toPrefix);
+
+    const markers: string[] = [fromPrefix];
+    for (const entry of entries) {
+      const key = entry.path();
+      if (!key.startsWith(fromPrefix)) continue; // defensive, should always hold
+      // Directory markers are zero-byte keys. The renamed children imply the
+      // new prefixes, so collect the old markers and drop them at the end.
+      if (key.endsWith('/')) {
+        markers.push(key);
+        continue;
+      }
+      await moveObject(op, key, toPrefix + key.slice(fromPrefix.length));
+    }
+
+    // Only the markers this walk saw. A blind removeAll(fromPrefix) here would
+    // also wipe anything uploaded into the old folder while the rename ran.
+    await op.remove(markers);
+    return { success: true, path: toPrefix };
+  } catch (error) {
+    console.error('Rename Folder Error:', error);
+    if (error instanceof Error && error.message === NO_DELETE_PERMISSION)
+      throw error;
+    throw error instanceof Error && error.message.startsWith('A folder named')
+      ? error
+      : new Error(
+          'Failed to rename folder. Some files may have already moved — refresh to check the current state.'
+        );
   }
 }
