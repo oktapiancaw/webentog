@@ -486,6 +486,28 @@ function PageContent() {
     router.push(`${pathname}?${params.toString()}`);
   };
 
+  /**
+   * Leaves the connection without deleting it: the saved row is untouched, so
+   * clicking it again reconnects. Clears the URL too, or a reload would
+   * auto-reconnect from `?conn=` and undo it.
+   */
+  const handleDisconnect = () => {
+    setConfig(null);
+    closePreview();
+    resetPaging();
+    setFiles([]);
+    setBookmarkedFolders([]);
+    setError(null);
+    setSearchText('');
+    setSearchQuery('');
+    const params = new URLSearchParams(searchParams);
+    params.delete('conn');
+    params.delete('path');
+    params.delete('page');
+    const qs = params.toString();
+    router.push(qs ? `${pathname}?${qs}` : pathname);
+  };
+
   const closePreview = () => {
     setViewingFile(null);
     setViewingUrl(null);
@@ -660,6 +682,7 @@ function PageContent() {
       <AppSidebar
         variant="inset"
         onConnect={handleConnect}
+        onDisconnect={handleDisconnect}
         isLoading={isLoading}
         bookmarkedFolders={bookmarkedFolders}
         isBookmarksLoading={isBookmarksLoading}

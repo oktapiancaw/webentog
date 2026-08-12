@@ -38,25 +38,95 @@ export interface ConnectionConfig {
   region: string;
 }
 
+/**
+ * Insert, or update when `config` carries an id.
+ *
+ * The id branch is the whole point: without it every edit inserted a second
+ * row. `connections` has no unique key other than the primary one, so there is
+ * nothing for an `ON CONFLICT` upsert to match on — this has to be an explicit
+ * branch.
+ */
 export async function saveConnection(config: ConnectionConfig) {
   try {
-    const { name, endpoint, accessKey, secretKey, bucket, region } = config;
-    const stmt = getDb().prepare(`
-      INSERT INTO connections (name, endpoint, accessKey, secretKey, bucket, region)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    const result = stmt.run(
+    const { id, name, endpoint, accessKey, secretKey, bucket, region } = config;
+    const db = getDb();
+    const values = [
       name || 'Unnamed Connection',
       endpoint,
       accessKey,
       secretKey,
       bucket,
-      region
-    );
+      region,
+    ];
+
+    if (id) {
+      const result = db
+        .prepare(
+          `UPDATE connections
+             SET name = ?, endpoint = ?, accessKey = ?, secretKey = ?, bucket = ?, region = ?
+           WHERE id = ?`
+        )
+        .run(...values, id);
+      // Falling back to an INSERT here would answer "this row is gone" by
+      // quietly making a new one under a different id, which is the duplicate
+      // bug again wearing a different hat.
+      if (result.changes === 0) {
+        throw new Error(
+          'This connection no longer exists. It may have been deleted in another tab.'
+        );
+      }
+      return { id };
+    }
+
+    const result = db
+      .prepare(
+        `INSERT INTO connections (name, endpoint, accessKey, secretKey, bucket, region)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(...values);
     return { id: result.lastInsertRowid };
   } catch (error) {
     console.error('Save Connection Error:', error);
-    throw new Error('Failed to save connection.');
+    throw error instanceof Error &&
+      error.message.startsWith('This connection no longer exists')
+      ? error
+      : new Error('Failed to save connection.');
+  }
+}
+
+/**
+ * Probes a set of credentials with the cheapest real round trip there is: one
+ * listing of one key. Proves the endpoint resolves, the credentials sign, and
+ * the bucket is reachable.
+ *
+ * Takes the form's fields rather than a saved id, so an unsaved connection can
+ * be tested before committing it. Returns a result instead of throwing —
+ * failing is the expected half of a probe, not an exception.
+ */
+export async function testConnection(
+  config: ConnectionConfig
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const op = getOperator(config);
+    await op.list('', { limit: 1 });
+    return { success: true };
+  } catch (error) {
+    console.error('Test Connection Error:', error);
+    // A 403 means the endpoint answered, so the address is right — but S3
+    // returns 403 both for a bad secret and for a policy that simply does not
+    // cover the bucket root, and the two are not reliably distinguishable from
+    // here. Say what is actually known instead of guessing at "wrong password".
+    if (isPermissionDenied(error)) {
+      return {
+        success: false,
+        error:
+          'Reached the endpoint, but the credentials were refused. Either the keys are wrong, or they are not allowed to list this bucket at its root — a key scoped to one prefix can still fail this test and work for browsing.',
+      };
+    }
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Could not connect.',
+    };
   }
 }
 

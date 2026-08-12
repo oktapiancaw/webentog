@@ -40,6 +40,9 @@ import {
   HardDrive,
   Pin,
   PinOff,
+  PlugZap,
+  Unplug,
+  AlertCircle,
 } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
@@ -66,7 +69,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import type { ConnectionConfig } from '@/app/actions/object-management';
+import {
+  testConnection,
+  type ConnectionConfig,
+} from '@/app/actions/object-management';
 import {
   loadConnections,
   storeConnection,
@@ -79,6 +85,8 @@ import type { ValidatedPinnedFolder } from '@/app/actions/pinned-folders';
 
 interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onConnect?: (config: ConnectionConfig, keepPath?: boolean) => void;
+  /** Leaves the active connection without deleting it. */
+  onDisconnect?: () => void;
   isLoading?: boolean;
   bookmarkedFolders?: ValidatedPinnedFolder[];
   isBookmarksLoading?: boolean;
@@ -97,6 +105,7 @@ const INITIAL_FORM_STATE = {
 
 export function AppSidebar({
   onConnect,
+  onDisconnect,
   isLoading,
   bookmarkedFolders,
   isBookmarksLoading,
@@ -114,6 +123,13 @@ export function AppSidebar({
     useState<ConnectionConfig>(INITIAL_FORM_STATE);
   const [showSecret, setShowSecret] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  // Null until a test has run. Any edit clears it, since "Connected" next to
+  // fields that have since changed is a lie.
+  const [testResult, setTestResult] = useState<{
+    success: boolean;
+    error?: string;
+  } | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
@@ -158,6 +174,38 @@ export function AppSidebar({
     }
   };
 
+  /** Every field edit goes through here so a stale test result cannot linger. */
+  const updateForm = (patch: Partial<ConnectionConfig>) => {
+    setTestResult(null);
+    setFormData((prev) => ({ ...prev, ...patch }));
+  };
+
+  const handleTest = async () => {
+    if (!formData.endpoint || !formData.bucket) {
+      toast.error('Fill in Endpoint and Bucket first.');
+      return;
+    }
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      setTestResult(await testConnection(formData));
+    } catch (error) {
+      // testConnection answers rather than throws, so this is the transport
+      // itself failing — the server action never got there.
+      setTestResult({
+        success: false,
+        error: 'Could not reach the server to run a test.',
+      });
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const handleDisconnect = () => {
+    setActiveId(null);
+    onDisconnect?.();
+  };
+
   const handleSave = async () => {
     if (!formData.name || !formData.endpoint || !formData.bucket) {
       toast.error('Please fill in required fields (Name, Endpoint, Bucket).');
@@ -171,7 +219,8 @@ export function AppSidebar({
       toast.success('Connection saved successfully.');
       setIsSheetOpen(false);
       setFormData(INITIAL_FORM_STATE);
-    } catch {
+    } catch (error) {
+      console.error(error);
       toast.error('Failed to save connection.');
     } finally {
       setIsSaving(false);
@@ -188,18 +237,21 @@ export function AppSidebar({
         router.replace(pathname); // don't leave a dead ?conn= behind
       }
       setConfirmDeleteId(null);
-    } catch {
+    } catch (error) {
+      console.error(error);
       toast.error('Failed to delete connection.');
     }
   };
 
   const openCreateNew = () => {
     setFormData(INITIAL_FORM_STATE);
+    setTestResult(null);
     setIsSheetOpen(true);
   };
 
   const openEdit = (config: ConnectionConfig) => {
     setFormData(config);
+    setTestResult(null);
     setIsSheetOpen(true);
   };
 
@@ -389,6 +441,18 @@ export function AppSidebar({
               <span className="font-mono text-[11px] text-muted-foreground">
                 {activeId ? 'connected' : 'idle'}
               </span>
+              {activeId && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-6"
+                  title="Disconnect — the saved connection is kept"
+                  aria-label="Disconnect"
+                  onClick={handleDisconnect}
+                >
+                  <Unplug className="size-3.5" />
+                </Button>
+              )}
             </div>
           </div>
         </SidebarFooter>
@@ -420,9 +484,7 @@ export function AppSidebar({
               </Label>
               <Input
                 value={formData.name}
-                onChange={(e) =>
-                  setFormData({ ...formData, name: e.target.value })
-                }
+                onChange={(e) => updateForm({ name: e.target.value })}
                 placeholder="E.g. Production AWS"
                 className="h-10 font-mono text-sm"
               />
@@ -434,9 +496,7 @@ export function AppSidebar({
               </Label>
               <Input
                 value={formData.endpoint}
-                onChange={(e) =>
-                  setFormData({ ...formData, endpoint: e.target.value })
-                }
+                onChange={(e) => updateForm({ endpoint: e.target.value })}
                 placeholder="https://s3.amazonaws.com"
                 className="h-10 font-mono text-sm"
               />
@@ -449,9 +509,7 @@ export function AppSidebar({
                 </Label>
                 <Input
                   value={formData.accessKey}
-                  onChange={(e) =>
-                    setFormData({ ...formData, accessKey: e.target.value })
-                  }
+                  onChange={(e) => updateForm({ accessKey: e.target.value })}
                   className="h-10 font-mono text-sm"
                 />
               </div>
@@ -461,7 +519,7 @@ export function AppSidebar({
                 </Label>
                 <Select
                   value={formData.region}
-                  onValueChange={(v) => setFormData({ ...formData, region: v })}
+                  onValueChange={(v) => updateForm({ region: v })}
                 >
                   <SelectTrigger className="h-10 font-mono text-sm">
                     <SelectValue />
@@ -485,9 +543,7 @@ export function AppSidebar({
                 <Input
                   type={showSecret ? 'text' : 'password'}
                   value={formData.secretKey}
-                  onChange={(e) =>
-                    setFormData({ ...formData, secretKey: e.target.value })
-                  }
+                  onChange={(e) => updateForm({ secretKey: e.target.value })}
                   placeholder="••••••••••••••••"
                   className="h-10 pr-10 font-mono text-sm"
                 />
@@ -512,27 +568,64 @@ export function AppSidebar({
               </Label>
               <Input
                 value={formData.bucket}
-                onChange={(e) =>
-                  setFormData({ ...formData, bucket: e.target.value })
-                }
+                onChange={(e) => updateForm({ bucket: e.target.value })}
                 className="h-10 font-mono text-sm"
               />
             </div>
           </div>
 
           <SheetFooter className="border-t bg-muted/40 p-6">
-            <div className="grid w-full grid-cols-2 gap-3">
+            <div className="grid w-full gap-3">
+              {/* A test proves nothing about fields edited since it ran, so
+                  updateForm clears this on every keystroke. */}
+              {testResult && (
+                <p
+                  className={cn(
+                    'flex items-start gap-2 text-[13px] leading-relaxed',
+                    testResult.success ? 'text-pulse-green' : 'text-destructive'
+                  )}
+                  role="status"
+                >
+                  {testResult.success ? (
+                    <Check className="mt-0.5 size-3.5 shrink-0" />
+                  ) : (
+                    <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+                  )}
+                  {testResult.success
+                    ? 'Connected. The bucket is reachable with these settings.'
+                    : testResult.error}
+                </p>
+              )}
+
               <Button
                 variant="outline"
-                className="h-10"
-                onClick={() => setIsSheetOpen(false)}
+                className="h-10 w-full"
+                loading={isTesting}
+                disabled={isSaving || isTesting}
+                onClick={handleTest}
               >
-                Cancel
+                {!isTesting && <PlugZap className="size-4" />}
+                Test connection
               </Button>
-              <Button loading={isSaving} className="h-10" onClick={handleSave}>
-                {!isSaving && <Save className="size-4" />}
-                Save config
-              </Button>
+
+              <div className="grid grid-cols-2 gap-3">
+                <Button
+                  variant="outline"
+                  className="h-10"
+                  onClick={() => setIsSheetOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  loading={isSaving}
+                  disabled={isSaving || isTesting}
+                  className="h-10"
+                  onClick={handleSave}
+                >
+                  {!isSaving && <Save className="size-4" />}
+                  Save config
+                </Button>
+              </div>
             </div>
           </SheetFooter>
         </SheetContent>
