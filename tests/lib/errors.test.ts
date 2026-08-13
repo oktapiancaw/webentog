@@ -17,14 +17,22 @@ test('the real OpenDAL transport failure becomes a sentence', () => {
   assert.doesNotMatch(message, /reqwest|http:\/\/|context:|service: s3/);
 });
 
-test("React's production stub does not reach the user", () => {
+test("React's production stub defers to the caller's fallback", () => {
+  // Next strips server-action messages in production, so the stub carries no
+  // information at all — the fallback names what was being attempted and is
+  // strictly more useful.
   const raw = new Error(
     'Minified React error #441; visit https://react.dev/errors/441 for the full message'
   );
   const { message, unexpected } = explainError(raw, FALLBACK);
-  assert.equal(message, 'The server hit an error handling that request.');
+  assert.equal(message, FALLBACK);
   assert.equal(unexpected, true);
   assert.doesNotMatch(message, /441|react\.dev/);
+});
+
+test('the stub still says something when there is no fallback', () => {
+  const { message } = explainError(new Error('Minified React error #441'));
+  assert.equal(message, 'The server hit an error handling that request.');
 });
 
 test('a denied credential says so, and is not reported as a bug', () => {

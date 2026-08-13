@@ -21,7 +21,7 @@ import { explainError } from '@/lib/utils';
  * pointing their users at this repo's author.
  */
 export const SUPPORT_EMAIL =
-  process.env.NEXT_PUBLIC_SUPPORT_EMAIL || 'frostyking77@gmail.com';
+  process.env.NEXT_PUBLIC_SUPPORT_EMAIL || 'oktapian1998@gmail.com';
 
 export const reportHint = (digest?: string) =>
   digest
