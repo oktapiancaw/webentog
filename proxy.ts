@@ -6,6 +6,23 @@ const SESSION_COOKIE_NAME = 'auth_session';
 const SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || 'secret-change-me'
 );
+
+/**
+ * A correctly signed cookie is not automatically a usable one.
+ *
+ * Sessions issued before users existed carry `{ user, expires }` and no
+ * userId. Those verify fine, so signature-only checking would wave them
+ * through to an app where every action then fails with "You are not signed
+ * in." Treating them as no session sends people to the login page instead,
+ * which is a thing they can act on.
+ */
+async function readSession(token: string) {
+  const { payload } = await jwtVerify(token, SECRET);
+  if (typeof payload.userId !== 'number' || typeof payload.role !== 'string') {
+    throw new Error('Session predates user accounts.');
+  }
+  return payload;
+}
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -27,8 +44,9 @@ export async function proxy(request: NextRequest) {
     }
 
     try {
-      // VALIDATION: Actually verify the JWT signature
-      await jwtVerify(sessionCookie, SECRET);
+      // VALIDATION: verify the signature and that the payload is a session
+      // this build understands.
+      await readSession(sessionCookie);
       return NextResponse.next();
     } catch (error) {
       // If JWT is expired or tampered with, clear it and redirect
@@ -41,7 +59,7 @@ export async function proxy(request: NextRequest) {
   // 4. Logic: If logged in but trying to access /login, send to dashboard/home
   if (isPublicPath && sessionCookie) {
     try {
-      await jwtVerify(sessionCookie, SECRET);
+      await readSession(sessionCookie);
       return NextResponse.redirect(new URL('/', request.url));
     } catch (e) {
       // Invalid cookie, let them stay on login page

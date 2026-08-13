@@ -123,9 +123,20 @@ export async function GET(req: Request) {
   }
 
   try {
-    const conn = getDb()
-      .prepare('SELECT * FROM connections WHERE id = ?')
-      .get(Number(connId)) as ConnectionRow | undefined;
+    const { db } = await getDb();
+    const conn = await db
+      .selectFrom('connections')
+      .select([
+        'id',
+        'name',
+        'endpoint',
+        'accessKey',
+        'secretKey',
+        'bucket',
+        'region',
+      ])
+      .where('id', '=', Number(connId))
+      .executeTakeFirst();
 
     if (!conn) {
       return new Response(JSON.stringify({ error: 'Unknown connection' }), {
