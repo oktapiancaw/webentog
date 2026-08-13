@@ -65,7 +65,7 @@ export default function RootLayout({
         >
           <Suspense>{children}</Suspense>
           <Toaster
-            position="top-right"
+            position="bottom-right"
             richColors
             toastOptions={{ className: 'font-sans' }}
           />

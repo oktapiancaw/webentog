@@ -19,7 +19,11 @@ import { useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Progress } from '@/components/ui/progress';
 import {
+  AlertCircle,
+  CheckCircle2,
   CloudUpload,
   FolderPlusIcon,
   RefreshCwIcon,
@@ -39,10 +43,18 @@ import {
 import {
   ConnectionConfig,
   createFolder,
-  uploadFiles,
 } from '@/app/actions/object-management';
+import { checkUploadBudget, getUploadUrl } from '@/app/actions/uploads';
 import { validateObjectName } from '@/lib/utils';
+import {
+  LARGE_FILE_THRESHOLD_BYTES,
+  MAX_UPLOAD_FILES,
+  MAX_UPLOAD_FILE_BYTES,
+  tooBigMessage,
+  validateUploadBatch,
+} from '@/lib/upload';
 import { toastError } from '@/lib/errors';
+import { unwrap } from '@/lib/action-result';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
 import {
@@ -72,14 +84,115 @@ const formSchema = z.object({
   files: z
     .array(z.custom<File>())
     .min(1, 'Please select at least one file')
-    .max(5, 'Please select up to 5 files')
-    .refine((files) => files.every((file) => file.size <= 10 * 1024 * 1024), {
-      message: 'File size must be less than 10MB',
+    .max(MAX_UPLOAD_FILES, `Please select up to ${MAX_UPLOAD_FILES} files`)
+    .refine((files) => validateUploadBatch(files) === null, {
+      message: 'That selection is over the upload limits',
       path: ['files'],
     }),
 });
 
 type FormValues = z.infer<typeof formSchema>;
+
+type UploadStatus = 'idle' | 'uploading' | 'success' | 'error';
+interface FileProgress {
+  status: UploadStatus;
+  progress: number;
+  error?: string;
+}
+
+/**
+ * One row's upload, via XMLHttpRequest — `fetch` has no upload-progress
+ * event, and this is what makes the per-file bar move instead of jumping
+ * from 0 to 100 on completion.
+ */
+function uploadViaRoute(
+  file: File,
+  config: ConnectionConfig,
+  folderPath: string,
+  regenerateName: boolean,
+  onProgress: (pct: number) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const body = new FormData();
+    body.append('file', file);
+    body.append('config', JSON.stringify(config));
+    body.append('folderPath', folderPath);
+    body.append('regenerateName', String(regenerateName));
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable)
+        onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) return resolve();
+      try {
+        reject(
+          new Error(JSON.parse(xhr.responseText).error ?? 'Upload failed.')
+        );
+      } catch {
+        reject(new Error('Upload failed.'));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Network error during upload.'));
+    xhr.open('POST', '/api/upload');
+    xhr.send(body);
+  });
+}
+
+/**
+ * A large file's bytes go straight to the bucket via a presigned PUT — the
+ * app server is never in the path. `xhr.send(file)` sends the raw body, not
+ * `FormData`: a presigned PUT's body is the object content itself.
+ */
+function uploadDirect(
+  file: File,
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  onProgress: (pct: number) => void
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable)
+        onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    // Browsers report a CORS rejection and a dropped connection identically —
+    // an opaque failed request with no readable status. Naming CORS as the
+    // likely cause points straight at the fix (bucket config) instead of
+    // leaving a self-hosted deploy staring at "network error."
+    const corsHint =
+      "Direct upload failed. If this is a self-hosted bucket, check that CORS allows PUT from this app's origin.";
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(corsHint));
+    xhr.onerror = () => reject(new Error(corsHint));
+    xhr.open(method, url);
+    for (const [key, value] of Object.entries(headers)) {
+      xhr.setRequestHeader(key, value);
+    }
+    xhr.send(file);
+  });
+}
+
+/** Picks the transport by size: small files proxy through the app, large ones go direct. */
+async function uploadFile(
+  file: File,
+  config: ConnectionConfig,
+  folderPath: string,
+  regenerateName: boolean,
+  onProgress: (pct: number) => void
+): Promise<void> {
+  if (file.size > LARGE_FILE_THRESHOLD_BYTES) {
+    const { url, method, headers } = unwrap(
+      await getUploadUrl(config, folderPath, file.name, regenerateName)
+    );
+    return uploadDirect(file, url, method, headers, onProgress);
+  }
+  return uploadViaRoute(file, config, folderPath, regenerateName, onProgress);
+}
 
 export function SearchBrowser({
   searchText,
@@ -95,6 +208,13 @@ export function SearchBrowser({
   const [folderName, setFolderName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  const [regenerateName, setRegenerateName] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
+  // Keyed by File identity, which is stable for as long as the same File
+  // object sits in the FileUpload list.
+  const [progressByFile, setProgressByFile] = useState<Map<File, FileProgress>>(
+    new Map()
+  );
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -108,6 +228,7 @@ export function SearchBrowser({
 
   const handleResetFiles = () => {
     setFiles([]);
+    setProgressByFile(new Map());
   };
 
   const handleCreateFolder = async (e: React.FormEvent) => {
@@ -124,7 +245,7 @@ export function SearchBrowser({
 
     setIsCreating(true);
     try {
-      await createFolder(config, `${base}${name}/`);
+      unwrap(await createFolder(config, `${base}${name}/`));
       setFolderName('');
       setIsFolderDialogOpen(false);
       onRefresh?.();
@@ -136,35 +257,82 @@ export function SearchBrowser({
     }
   };
 
+  const setFileState = (file: File, patch: Partial<FileProgress>) => {
+    setProgressByFile((prev) => {
+      const next = new Map(prev);
+      next.set(file, {
+        status: 'idle',
+        progress: 0,
+        ...next.get(file),
+        ...patch,
+      });
+      return next;
+    });
+  };
+
   const handleUploadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isUploading) return;
 
-    if (files.length === 0) {
-      toast.error('Pick at least one file to upload.');
+    const invalid = validateUploadBatch(files);
+    if (invalid) return toast.error(invalid);
+
+    // The only place the batch-wide count-and-total rule can actually be
+    // enforced: upload is one request per file, so by the time a later file
+    // in the batch is reached, earlier ones have already gone out.
+    try {
+      unwrap(await checkUploadBudget(files.map((f) => ({ size: f.size }))));
+    } catch (error) {
+      toastError(error, 'Could not start the upload.');
       return;
     }
 
-    const formData = new FormData();
-    files.forEach((file) => {
-      formData.append('files', file);
-    });
+    setIsUploading(true);
+    setProgressByFile(
+      new Map(files.map((f) => [f, { status: 'idle' as const, progress: 0 }]))
+    );
 
-    try {
-      const response = await uploadFiles(config, formData, currentPath);
-
-      if (response.success) {
-        handleResetFiles();
-
-        setIsDialogOpen(false);
-
-        onRefresh?.();
-
-        toast.success('Uploaded successfully!');
+    let failure: string | null = null;
+    // Sequential, not Promise.all: one request in flight at a time is what
+    // makes "file 2 of 5" a real state instead of five bars moving at once,
+    // and it means a dropped connection on file 2 leaves file 3 never
+    // started rather than half-attempted.
+    for (const file of files) {
+      setFileState(file, { status: 'uploading', progress: 0 });
+      try {
+        await uploadFile(file, config, currentPath, regenerateName, (pct) =>
+          setFileState(file, { progress: pct })
+        );
+        setFileState(file, { status: 'success', progress: 100 });
+      } catch (error) {
+        failure = error instanceof Error ? error.message : 'Upload failed.';
+        setFileState(file, { status: 'error', error: failure });
+        // Stop rather than continue past a failure: a dropped connection or a
+        // CORS misconfiguration will fail every remaining file the same way,
+        // and racing through the rest just multiplies the same error.
+        break;
       }
-    } catch (error) {
-      toastError(error, 'Could not upload those files.');
+    }
+
+    setIsUploading(false);
+
+    if (!failure) {
+      toast.success(
+        files.length === 1
+          ? 'Uploaded successfully!'
+          : `Uploaded ${files.length} files.`
+      );
+      handleResetFiles();
+      setIsDialogOpen(false);
+      onRefresh?.();
+    } else {
+      // The reason itself, not a pointer at the list — the row only shows an
+      // icon, so the toast is the only place the cause is readable.
+      toast.error(failure);
+      onRefresh?.(); // whatever did land before the failure should still show up
     }
   };
+
   return (
     <div className="flex gap-2">
       <div className="relative w-full">
@@ -235,7 +403,13 @@ export function SearchBrowser({
           </form>
         </DialogContent>
       </Dialog>
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+      <Dialog
+        open={isDialogOpen}
+        onOpenChange={(open) => {
+          if (isUploading) return; // don't tear down mid-batch
+          setIsDialogOpen(open);
+        }}
+      >
         <DialogTrigger asChild>
           <Button variant="default">
             <UploadIcon className="size-4" />
@@ -243,7 +417,7 @@ export function SearchBrowser({
           </Button>
         </DialogTrigger>
 
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Upload files</DialogTitle>
             <span className="text-sm text-muted-foreground">
@@ -254,12 +428,40 @@ export function SearchBrowser({
 
           <p className="mt-2 flex flex-wrap items-center justify-between gap-1 text-xs text-muted-foreground">
             <span>All file types accepted.</span>
-            <span>Max. 5 files · 10MB each</span>
+            <span>
+              Max. {MAX_UPLOAD_FILES} files ·{' '}
+              {Math.round(MAX_UPLOAD_FILE_BYTES / (1024 * 1024))}MB each
+            </span>
           </p>
+
+          <div className="flex items-center gap-2 py-1">
+            <Checkbox
+              id="regenerate-name"
+              checked={regenerateName}
+              disabled={isUploading}
+              onCheckedChange={(v) => setRegenerateName(v === true)}
+            />
+            <label
+              htmlFor="regenerate-name"
+              className="text-xs text-muted-foreground"
+            >
+              Regenerate name to avoid conflicts
+            </label>
+          </div>
+          {!regenerateName && (
+            <p className="text-xs text-destructive">
+              Files with the same name will overwrite existing objects at the
+              destination.
+            </p>
+          )}
 
           <form
             id="upload-form"
-            className="w-full"
+            // min-w-0 matters more than w-full here: DialogContent is a grid,
+            // and a grid item defaults to min-width:auto, so without this the
+            // form refuses to shrink below its content and a long filename
+            // pushes it straight out through the dialog's max-w-lg edge.
+            className="w-full min-w-0"
             onSubmit={handleUploadSubmit}
           >
             <FileUpload
@@ -268,12 +470,20 @@ export function SearchBrowser({
                 setFiles(newFiles);
                 form.setValue('files', newFiles);
               }}
-              maxFiles={5}
-              maxSize={10 * 1024 * 1024}
-              onFileReject={(_, message) => {
-                form.setError('files', {
-                  message,
-                });
+              maxFiles={MAX_UPLOAD_FILES}
+              maxSize={MAX_UPLOAD_FILE_BYTES}
+              disabled={isUploading}
+              onFileReject={(file, message) => {
+                // The primitive's own wording is just "File too large"; say
+                // which file and what the actual limit is. Rejecting here
+                // means an oversized file never enters the list, so there is
+                // nothing to fail later.
+                toast.error(
+                  message === 'File too large'
+                    ? tooBigMessage(file.name)
+                    : `${file.name}: ${message}`
+                );
+                form.setError('files', { message });
               }}
               multiple
             >
@@ -288,17 +498,44 @@ export function SearchBrowser({
                 to upload
               </FileUploadDropzone>{' '}
               <FileUploadList>
-                {files.map((file, index) => (
-                  <FileUploadItem key={index} value={file} className="p-2">
-                    <FileUploadItemPreview className="size-8" />
-                    <FileUploadItemMetadata size="sm" />
-                    <FileUploadItemDelete asChild>
-                      <Button variant="ghost" size="icon" className="size-6">
-                        <X className="size-3" />
-                      </Button>
-                    </FileUploadItemDelete>
-                  </FileUploadItem>
-                ))}
+                {files.map((file, index) => {
+                  const state = progressByFile.get(file);
+                  return (
+                    <FileUploadItem key={index} value={file} className="p-2">
+                      <FileUploadItemPreview className="size-8" />
+                      <FileUploadItemMetadata size="sm" />
+                      {state && state.status !== 'idle' && (
+                        <div className="flex w-24 shrink-0 items-center justify-end gap-1.5">
+                          {state.status === 'uploading' && (
+                            <Progress
+                              value={state.progress}
+                              className="h-1.5"
+                            />
+                          )}
+                          {state.status === 'success' && (
+                            <CheckCircle2 className="size-4 text-pulse-green" />
+                          )}
+                          {state.status === 'error' && (
+                            <AlertCircle
+                              className="size-4 shrink-0 text-destructive"
+                              aria-label={state.error}
+                            />
+                          )}
+                        </div>
+                      )}
+                      <FileUploadItemDelete asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-6"
+                          disabled={isUploading}
+                        >
+                          <X className="size-3" />
+                        </Button>
+                      </FileUploadItemDelete>
+                    </FileUploadItem>
+                  );
+                })}
               </FileUploadList>
             </FileUpload>
             <DialogFooter className="sm:justify-between mt-4">
@@ -306,6 +543,7 @@ export function SearchBrowser({
                 <Button
                   variant={'secondary'}
                   type="button"
+                  disabled={isUploading}
                   onClick={handleResetFiles}
                 >
                   Close
@@ -315,9 +553,16 @@ export function SearchBrowser({
                 type={'submit'}
                 variant={'default'}
                 form="upload-form"
-                disabled={!files || files.length < 1}
+                loading={isUploading}
+                disabled={!files || files.length < 1 || isUploading}
               >
-                Upload {files.length > 0 && `(${files.length})`}
+                {isUploading
+                  ? `Uploading ${
+                      [...progressByFile.values()].filter(
+                        (s) => s.status === 'success' || s.status === 'error'
+                      ).length + 1
+                    }/${files.length}…`
+                  : `Upload ${files.length > 0 ? `(${files.length})` : ''}`}
               </Button>
             </DialogFooter>
           </form>

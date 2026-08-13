@@ -733,6 +733,12 @@ function FileUploadDropzone(props: FileUploadDropzoneProps) {
       if (event.defaultPrevented) return;
 
       event.preventDefault();
+      // Without an explicit dropEffect, some browsers (Chrome on Windows in
+      // particular) show the blocked/no-entry cursor when the drag source's
+      // effectAllowed is narrower than the default — which some file managers
+      // set for non-media files. The drop handler already accepts every type;
+      // this only fixes what the cursor advertises during the drag.
+      event.dataTransfer.dropEffect = "copy";
       store.dispatch({ type: "SET_DRAG_OVER", dragOver: true });
     },
     [store, propsRef],
@@ -745,6 +751,7 @@ function FileUploadDropzone(props: FileUploadDropzoneProps) {
       if (event.defaultPrevented) return;
 
       event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
       store.dispatch({ type: "SET_DRAG_OVER", dragOver: true });
     },
     [store, propsRef],
@@ -953,7 +960,7 @@ function FileUploadList(props: FileUploadListProps) {
       dir={context.dir}
       {...listProps}
       className={cn(
-        "data-[state=inactive]:fade-out-0 data-[state=active]:fade-in-0 data-[state=inactive]:slide-out-to-top-2 data-[state=active]:slide-in-from-top-2 flex flex-col gap-2 data-[state=active]:animate-in data-[state=inactive]:animate-out",
+        "data-[state=inactive]:fade-out-0 data-[state=active]:fade-in-0 data-[state=inactive]:slide-out-to-top-2 data-[state=active]:slide-in-from-top-2 flex min-w-0 flex-col gap-2 data-[state=active]:animate-in data-[state=inactive]:animate-out",
         orientation === "horizontal" && "flex-row overflow-x-auto p-1.5",
         className,
       )}
@@ -1042,7 +1049,10 @@ function FileUploadItem(props: FileUploadItemProps) {
         dir={context.dir}
         {...itemProps}
         className={cn(
-          "relative flex items-center gap-2.5 rounded-md border p-3",
+          // min-w-0 lets the row shrink below its content so the filename's
+          // own `truncate` engages. Flex items don't shrink past their content
+          // by default, so every level of the chain has to opt in.
+          "relative flex min-w-0 items-center gap-2.5 rounded-md border p-3",
           className,
         )}
       >
@@ -1168,7 +1178,10 @@ function FileUploadItemMetadata(props: FileUploadItemMetadataProps) {
           {itemContext.fileState.error && (
             <span
               id={itemContext.messageId}
-              className="text-destructive text-xs"
+              // Wraps rather than truncates — an error is meant to be read.
+              // break-words stops a long unbreakable token (a URL in a driver
+              // message) from forcing the row wider than its container.
+              className="text-destructive text-xs break-words"
             >
               {itemContext.fileState.error}
             </span>
