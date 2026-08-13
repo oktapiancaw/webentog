@@ -54,22 +54,31 @@ Create a `.env` in the project root:
 | `ADMIN_PASSWORD` | `admin` | Login password |
 | `JWT_SECRET` | `secret-change-me` | Signs the session cookie. Change it before you expose the app. |
 | `PERSISTENT_CONNECTION` | `true` | Picks where connections and pins live. See below. |
+| `DATABASE_TYPE` | `sqlite` | `sqlite`, `postgres` or `mysql`. |
+| `DATABASE_PATH` | `./data/connections.db` | SQLite only. Relative to the working directory. |
+| `DATABASE_HOST` | — | Postgres/MySQL only. Required. |
+| `DATABASE_PORT` | `5432` / `3306` | Postgres/MySQL only. Defaults per engine. |
+| `DATABASE_USERNAME` | — | Postgres/MySQL only. Required. |
+| `DATABASE_PASSWORD` | — | Postgres/MySQL only. Required. |
+| `DATABASE_NAME` | — | Postgres/MySQL only. Required. The schema name, not a file path. |
+
+Leaving every `DATABASE_*` variable unset preserves the previous SQLite-only behaviour exactly, down to the file path. The `DATABASE_*` variables are only read when `PERSISTENT_CONNECTION=true`; the non-persistent mode never opens a database at all.
 
 ### Two storage modes
 
 <details open>
 <summary><b>Persistent</b> (<code>PERSISTENT_CONNECTION=true</code>)</summary>
 
-Your connections and pinned folders go into SQLite at `./data/connections.db`. The login page guards access, and a JWT cookie keeps you signed in for 7 days.
+Your connections and pinned folders go into a database — SQLite at `./data/connections.db` unless you set `DATABASE_TYPE`. The login page guards access, and a JWT cookie keeps you signed in for 7 days.
 
-Mount `./data` as a volume so your setup survives a container rebuild. The included `docker-compose.yaml` already does this.
+On SQLite, mount `./data` as a volume so your setup survives a container rebuild. The included `docker-compose.yaml` already does this. On Postgres or MySQL the volume is irrelevant — point `DATABASE_HOST` at your server instead, and the tables are created on first use.
 
 </details>
 
 <details>
 <summary><b>Non-persistent</b> (<code>PERSISTENT_CONNECTION=false</code>)</summary>
 
-Nothing reaches disk. SQLite never opens, the login page disappears, and every request counts as authorized. Connections and pins sit in the browser's `sessionStorage`, so closing the tab wipes them.
+Nothing reaches disk. No database is opened whatever `DATABASE_TYPE` says, the login page disappears, and every request counts as authorized. Connections and pins sit in the browser's `sessionStorage`, so closing the tab wipes them.
 
 Use this for a throwaway container or a single-user box behind its own auth.
 
@@ -96,7 +105,23 @@ docker run -p 3000:3000 \
   webentog
 ```
 
-The multi-stage build uses Next.js standalone output on Debian slim.
+Against Postgres instead of the default SQLite file:
+
+```bash
+docker run -p 3000:3000 \
+  -e ADMIN_USERNAME=myuser \
+  -e ADMIN_PASSWORD=mypassword \
+  -e JWT_SECRET=$(openssl rand -hex 32) \
+  -e PERSISTENT_CONNECTION=true \
+  -e DATABASE_TYPE=postgres \
+  -e DATABASE_HOST=postgres.internal \
+  -e DATABASE_USERNAME=webentog \
+  -e DATABASE_PASSWORD=changeme \
+  -e DATABASE_NAME=webentog \
+  webentog
+```
+
+No `./data` volume is needed there. The multi-stage build uses Next.js standalone output on Debian slim.
 
 ---
 
