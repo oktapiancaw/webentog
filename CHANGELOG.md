@@ -1,3 +1,22 @@
+## [1.4.0] - 2026-08-13
+
+### 🚀 Features
+
+- *(db)* Support postgres and mysql alongside sqlite
+- *(auth)* Add users, roles and per-connection grants
+- *(ui)* Move user management into the sidebar
+- *(upload)* Per-file progress, size limits and a streamed route
+- *(objects)* Copy and move with a destination picker
+- *(versions)* Preview an old version of an image inline
+- *(browser)* Multi-select rows for bulk delete and zip download
+
+### 🐛 Bug Fixes
+
+- *(errors)* Return actionable failures instead of throwing them
+
+### 📚 Documentation
+
+- :bookmark: change package.json version to 1.4.0
 ## [1.3.3] - 2026-08-12
 
 ### 🚀 Features
@@ -5,6 +24,7 @@
 - *(browser)* Put page and size in the URL, add numbered pages
 - *(browser)* Create, rename and delete folders
 - *(errors)* Readable error messages with a report address
+- :memo: Add changelog entry for 1.3.3
 
 ### 🐛 Bug Fixes
 
