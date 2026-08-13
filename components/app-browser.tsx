@@ -35,8 +35,11 @@ import {
   PinOff,
   Sigma,
   PencilLine,
+  Copy as CopyIcon,
+  FolderInput,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import {
@@ -61,6 +64,7 @@ import {
   copyToClipboard,
   PAGE_SIZES,
   pageWindow,
+  REVEAL_ANIMATION,
   validateObjectName,
   type FileType,
 } from '@/lib/utils';
@@ -90,6 +94,13 @@ interface StorageBrowserProps {
   onDeleteFolder?: (file: FileItem) => void;
   /** `newName` is a single segment, never a path. */
   onRename?: (file: FileItem, newName: string) => void;
+  /** Both open the destination picker; the item keeps its name either way. */
+  onCopyRequest?: (file: FileItem) => void;
+  onMoveRequest?: (file: FileItem) => void;
+  /** Bulk-action selection. Separate from `selectedId`, which is the preview. */
+  checkedIds: Set<string>;
+  onToggleChecked: (file: FileItem) => void;
+  onToggleCheckAll: () => void;
   /** Keyed by S3 key (FileItem.id), matching what the pins table stores. */
   pinnedPaths?: Set<string>;
   onTogglePin?: (file: FileItem) => void;
@@ -147,6 +158,11 @@ export function StorageBrowser({
   onDelete,
   onDeleteFolder,
   onRename,
+  onCopyRequest,
+  onMoveRequest,
+  checkedIds,
+  onToggleChecked,
+  onToggleCheckAll,
   pinnedPaths,
   onTogglePin,
   pageSize,
@@ -190,10 +206,21 @@ export function StorageBrowser({
     onRename?.(file, name);
   };
 
+  // Every row already checked, so the header box toggles off rather than on.
+  // Guarded on length: `every` on an empty page is vacuously true, which would
+  // paint the header checked while nothing is selected.
+  const allVisibleChecked =
+    files.length > 0 && files.every((f) => checkedIds.has(f.id));
+  const someVisibleChecked = files.some((f) => checkedIds.has(f.id));
+  const hasChecked = checkedIds.size > 0;
+
   const renderRows = () => {
     if (isLoading) {
       return Array.from({ length: pageSize }).map((_, i) => (
         <tr key={`skeleton-${i}`} className="border-b last:border-0">
+          <td className="w-10 px-4 py-2.5">
+            <Skeleton className="size-4 rounded-sm" />
+          </td>
           <td className="px-4 py-2.5">
             <div className="flex items-center gap-3">
               <Skeleton className="size-4 rounded-sm" />
@@ -219,7 +246,7 @@ export function StorageBrowser({
       return (
         <tr>
           <td
-            colSpan={4}
+            colSpan={5}
             className="p-10 text-center text-sm text-muted-foreground"
           >
             Nothing here. This directory is empty.
@@ -235,8 +262,15 @@ export function StorageBrowser({
         const isFolder = file.type === 'folder';
         return (
           <tr key={file.id} className="border-b last:border-0">
-            <td colSpan={4} className="bg-destructive px-4 py-2.5 text-white">
-              <div className="flex items-center justify-between gap-3">
+            <td colSpan={5} className="bg-destructive px-4 py-2.5 text-white">
+              {/* The animation goes on the inner div, not the cell: transforms
+                  on a table-cell are unreliable across browsers. */}
+              <div
+                className={cn(
+                  'flex items-center justify-between gap-3',
+                  REVEAL_ANIMATION
+                )}
+              >
                 <span className="min-w-0 truncate text-sm">
                   Delete <span className="font-mono">{file.name}</span>
                   {/* A folder delete is recursive and has no undo, so say so
@@ -270,8 +304,8 @@ export function StorageBrowser({
       if (renamingId === file.id) {
         return (
           <tr key={file.id} className="border-b last:border-0 bg-accent">
-            <td colSpan={4} className="px-4 py-2">
-              <div className="flex items-center gap-3">
+            <td colSpan={5} className="px-4 py-2">
+              <div className={cn('flex items-center gap-3', REVEAL_ANIMATION)}>
                 {getFileIcon(file.type)}
                 <Input
                   autoFocus
@@ -316,6 +350,23 @@ export function StorageBrowser({
             isSelected && 'bg-accent'
           )}
         >
+          {/* Outside the clickable name cell so checking a row never also
+              opens the preview or navigates into the folder. */}
+          <td className="w-10 px-4 py-2.5 align-middle">
+            <Checkbox
+              checked={checkedIds.has(file.id)}
+              onCheckedChange={() => onToggleChecked(file)}
+              aria-label={`Select ${file.name}`}
+              className={cn(
+                'transition-opacity',
+                // Hidden until hover, like the row's own "..." trigger — but
+                // never once a selection exists, or unchecking turns into a
+                // hunt for a box that vanished when the pointer left.
+                !hasChecked &&
+                  'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=checked]:opacity-100'
+              )}
+            />
+          </td>
           <td
             onClick={() =>
               file.type === 'folder' ? onNavigate?.(file.id) : onView?.(file)
@@ -377,6 +428,12 @@ export function StorageBrowser({
                       <DropdownMenuItem onClick={() => startRename(file)}>
                         <PencilLine /> Rename
                       </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => onCopyRequest?.(file)}>
+                        <CopyIcon /> Copy to…
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => onMoveRequest?.(file)}>
+                        <FolderInput /> Move to…
+                      </DropdownMenuItem>
                     </>
                   ) : (
                     <>
@@ -396,6 +453,12 @@ export function StorageBrowser({
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => startRename(file)}>
                         <PencilLine /> Rename
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => onCopyRequest?.(file)}>
+                        <CopyIcon /> Copy to…
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => onMoveRequest?.(file)}>
+                        <FolderInput /> Move to…
                       </DropdownMenuItem>
                     </>
                   )}
@@ -431,6 +494,30 @@ export function StorageBrowser({
           <table className="w-full text-left">
             <thead className="border-b bg-muted/40">
               <tr>
+                <th className="h-9 w-10 px-4 align-middle">
+                  <Checkbox
+                    // A dash, not a tick, once the page is partly selected —
+                    // a full tick after unchecking one row would claim the
+                    // whole page is still selected.
+                    checked={
+                      allVisibleChecked
+                        ? true
+                        : someVisibleChecked
+                          ? 'indeterminate'
+                          : false
+                    }
+                    onCheckedChange={onToggleCheckAll}
+                    disabled={isLoading || files.length === 0}
+                    // "This page", not "this folder": in cursor mode the client
+                    // has never seen the pages it has not fetched.
+                    aria-label="Select everything on this page"
+                    title={
+                      someVisibleChecked && !allVisibleChecked
+                        ? 'Select the rest of this page'
+                        : 'Select everything on this page'
+                    }
+                  />
+                </th>
                 {['Name', 'Size', 'Last Modified'].map((label) => (
                   <th
                     key={label}

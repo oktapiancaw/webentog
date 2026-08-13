@@ -31,6 +31,7 @@ import type {
   ObjectMetadata,
 } from '@/app/actions/object-management';
 import { SiteHeader } from '@/components/site-header';
+import { SHELL_STYLE } from '@/components/app-shell';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import {
   countFolderObjects,
@@ -47,9 +48,15 @@ import { Button } from '@/components/ui/button';
 import { ScanSearch } from 'lucide-react';
 import { toast } from 'sonner';
 import { toastError } from '@/lib/errors';
+import { unwrap } from '@/lib/action-result';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { FilePreview } from '@/components/file-preview';
 import { VersionHistoryDialog } from '@/components/version-history-dialog';
+import {
+  CopyMoveDialog,
+  type CopyMoveTarget,
+} from '@/components/copy-move-dialog';
+import { SelectionToolbar } from '@/components/selection-toolbar';
 import type { ValidatedPinnedFolder } from './actions/pinned-folders';
 import {
   addPin,
@@ -59,9 +66,11 @@ import {
   removePinsUnder,
 } from '@/lib/storage-mode';
 import {
+  cn,
   explainError,
   getLastNameFromPath,
   parsePagingParams,
+  REVEAL_ANIMATION,
   walkCursorStack,
 } from '@/lib/utils';
 
@@ -125,6 +134,37 @@ function PageContent() {
   );
   const [isMetadataLoading, setIsMetadataLoading] = useState(false);
   const [versionsFile, setVersionsFile] = useState<FileItem | null>(null);
+  const [copyMoveTarget, setCopyMoveTarget] = useState<CopyMoveTarget | null>(
+    null
+  );
+
+  /**
+   * Rows checked for a bulk action.
+   *
+   * A Map of the items themselves, not a Set of ids: in cursor mode `files`
+   * holds one page, so a row checked on page 1 is gone from state by page 2
+   * and could not be looked up again at action time. Keeping the FileItem at
+   * check-time is what makes a cross-page selection actionable.
+   *
+   * Named `checked*` to stay clear of `selectedId`, which is the preview
+   * highlight and means something else entirely.
+   */
+  const [checkedItems, setCheckedItems] = useState<Map<string, FileItem>>(
+    new Map()
+  );
+  const [isBulkBusy, setIsBulkBusy] = useState(false);
+  const checkedIds = useMemo(
+    () => new Set(checkedItems.keys()),
+    [checkedItems]
+  );
+  const clearChecked = () => setCheckedItems(new Map());
+
+  const toggleChecked = (file: FileItem) =>
+    setCheckedItems((prev) => {
+      const next = new Map(prev);
+      if (!next.delete(file.id)) next.set(file.id, file);
+      return next;
+    });
   // Lives here because FilePreview unmounts on close, which would reset the
   // chosen width on every new file.
   const [previewWidth, setPreviewWidth] = useState(460);
@@ -322,6 +362,10 @@ function PageContent() {
       setForceFullScan(false);
       modeRef.current = null;
       setMode(null);
+      // A selection belongs to one folder. Carrying it across would point bulk
+      // actions at keys the user can no longer see.
+
+      setCheckedItems(new Map());
       // Back into a `?path=x&page=3` entry throws away the stack with the
       // folder, so the new folder's page 3 has to be walked to.
       // set-state-in-effect: restorePage is a loader like fetchPage below, and
@@ -458,6 +502,112 @@ function PageContent() {
     }
   };
 
+  /** The header box acts on the rows actually on screen, never the folder. */
+  const toggleCheckAllVisible = () =>
+    setCheckedItems((prev) => {
+      const next = new Map(prev);
+      if (visibleFiles.every((f) => next.has(f.id))) {
+        visibleFiles.forEach((f) => next.delete(f.id));
+      } else {
+        visibleFiles.forEach((f) => next.set(f.id, f));
+      }
+      return next;
+    });
+
+  /**
+   * Deletes each checked row in turn, reusing the single-item actions.
+   *
+   * Sequential and per-item on purpose: there is no batched delete action, and
+   * one failure (a folder someone else already removed) should not abandon the
+   * rest of the selection. The count in the toast is what the user gets instead
+   * of a progress bar.
+   */
+  const handleBulkDelete = async () => {
+    if (!config) return;
+    const targets = [...checkedItems.values()];
+    setIsBulkBusy(true);
+
+    let succeeded = 0;
+    let firstError = '';
+    for (const file of targets) {
+      try {
+        unwrap(
+          file.type === 'folder'
+            ? await deleteFolder(config, file.id)
+            : await deleteFile(config, file.id)
+        );
+        if (config.id && file.type === 'folder') {
+          await removePinsUnder(config.id, file.id);
+        }
+        succeeded++;
+      } catch (err) {
+        console.error(`Failed to delete ${file.name}:`, err);
+        if (!firstError) {
+          firstError = explainError(
+            err,
+            `Could not delete ${file.name}.`
+          ).message;
+        }
+      }
+    }
+
+    setIsBulkBusy(false);
+    if (succeeded === targets.length) {
+      toast.success(`Deleted ${succeeded} of ${targets.length} items`);
+    } else {
+      // Naming the first cause beats "3 of 5 failed" with no reason attached.
+      toast.error(
+        `Deleted ${succeeded} of ${targets.length} items. ${firstError}`
+      );
+    }
+
+    clearChecked();
+    if (config.id) fetchBookmarks(config); // some pins may have just gone
+    handleRefresh();
+  };
+
+  /**
+   * One zip for the whole selection. Folders are sent as folders and expanded
+   * server-side: `listFiles` is a files-only contract, and a folder key passed
+   * through it is either skipped or throws NotFound and kills the archive.
+   */
+  const handleBulkDownload = async () => {
+    if (!config) return;
+    const selection = [...checkedItems.values()].map((f) => ({
+      path: f.id,
+      type: f.type === 'folder' ? ('folder' as const) : ('file' as const),
+    }));
+
+    setIsBulkBusy(true);
+    try {
+      toast.loading('Preparing your ZIP...', { id: 'zip-toast' });
+      const response = await fetch('/api/download-zip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config, selection }),
+      });
+      if (!response.ok) throw new Error('Network response was not ok');
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${getLastNameFromPath(currentPath) || 'selection'}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast.success('Download started!', { id: 'zip-toast' });
+    } catch (error) {
+      toastError(error, 'Could not build the ZIP for this selection.', {
+        id: 'zip-toast',
+      });
+    } finally {
+      setIsBulkBusy(false);
+    }
+  };
+
   /**
    * `keepPath` is set when the sidebar restores a connection from `?conn=` on
    * reload, where the path still belongs to that bucket. A connect you click
@@ -467,6 +617,7 @@ function PageContent() {
     setConfig(newConfig);
     closePreview();
     resetPaging(); // cursors are bucket-scoped, never carry them across
+    clearChecked(); // keys from the old bucket mean nothing in this one
     setBookmarkedFolders([]); // don't show the old connection's pins mid-fetch
     fetchBookmarks(newConfig);
     const params = new URLSearchParams(searchParams);
@@ -489,6 +640,7 @@ function PageContent() {
     setConfig(null);
     closePreview();
     resetPaging();
+    clearChecked();
     setFiles([]);
     setBookmarkedFolders([]);
     setError(null);
@@ -515,7 +667,7 @@ function PageContent() {
   const handleDelete = async (file: FileItem) => {
     if (!config) return;
     try {
-      await deleteFile(config, file.id);
+      unwrap(await deleteFile(config, file.id));
       toast.success(`Deleted ${file.name}`);
       if (viewingFile?.id === file.id) closePreview();
       handleRefresh();
@@ -532,7 +684,7 @@ function PageContent() {
   const handleDeleteFolder = async (file: FileItem) => {
     if (!config) return;
     try {
-      await deleteFolder(config, file.id);
+      unwrap(await deleteFolder(config, file.id));
       if (config.id) {
         const removed = await removePinsUnder(config.id, file.id);
         if (removed.length > 0) {
@@ -560,14 +712,32 @@ function PageContent() {
     if (!config) return;
     const isFolder = file.type === 'folder';
     try {
-      if (isFolder) await renameFolder(config, file.id, newName);
-      else await renameFile(config, file.id, newName);
+      unwrap(
+        isFolder
+          ? await renameFolder(config, file.id, newName)
+          : await renameFile(config, file.id, newName)
+      );
       toast.success(`Renamed to ${newName}`);
       if (viewingFile?.id.startsWith(file.id)) closePreview();
       handleRefresh();
     } catch (error) {
       toastError(error, `Could not rename ${file.name}.`);
     }
+  };
+
+  /**
+   * A move leaves the source key behind, so an open preview of it now points at
+   * nothing. A pinned folder that moved keeps its old path and shows as
+   * "missing" until re-pinned — same accepted gap as rename.
+   */
+  const handleCopyMoveDone = () => {
+    if (
+      copyMoveTarget?.mode === 'move' &&
+      viewingFile?.id.startsWith(copyMoveTarget.file.id)
+    ) {
+      closePreview();
+    }
+    handleRefresh();
   };
 
   const handleNavigate = (path: string) => {
@@ -661,14 +831,7 @@ function PageContent() {
   };
 
   return (
-    <SidebarProvider
-      style={
-        {
-          '--sidebar-width': 'calc(var(--spacing) * 78)',
-          '--header-height': 'calc(var(--spacing) * 12)',
-        } as React.CSSProperties
-      }
-    >
+    <SidebarProvider style={SHELL_STYLE}>
       <AppSidebar
         variant="inset"
         onConnect={handleConnect}
@@ -697,7 +860,12 @@ function PageContent() {
             )}
 
             {config && error && (
-              <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              <div
+                className={cn(
+                  'mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive',
+                  REVEAL_ANIMATION
+                )}
+              >
                 {error}
               </div>
             )}
@@ -714,7 +882,12 @@ function PageContent() {
                   searchesWholeFolder={mode !== 'cursor'}
                 />
                 {mode === 'cursor' && (
-                  <div className="flex items-center justify-between gap-3 rounded-md border border-dashed px-3 py-2">
+                  <div
+                    className={cn(
+                      'flex items-center justify-between gap-3 rounded-md border border-dashed px-3 py-2',
+                      REVEAL_ANIMATION
+                    )}
+                  >
                     <p className="text-xs text-muted-foreground">
                       Large directory, showing one page at a time.{' '}
                       {foldersTruncated
@@ -734,6 +907,18 @@ function PageContent() {
                     </Button>
                   </div>
                 )}
+                <SelectionToolbar
+                  count={checkedItems.size}
+                  folderCount={
+                    [...checkedItems.values()].filter(
+                      (f) => f.type === 'folder'
+                    ).length
+                  }
+                  busy={isBulkBusy}
+                  onClear={clearChecked}
+                  onDelete={handleBulkDelete}
+                  onDownload={handleBulkDownload}
+                />
                 <StorageBrowser
                   files={visibleFiles}
                   isLoading={isLoading}
@@ -746,6 +931,15 @@ function PageContent() {
                   onDelete={handleDelete}
                   onDeleteFolder={handleDeleteFolder}
                   onRename={handleRename}
+                  onCopyRequest={(file) =>
+                    setCopyMoveTarget({ file, mode: 'copy' })
+                  }
+                  onMoveRequest={(file) =>
+                    setCopyMoveTarget({ file, mode: 'move' })
+                  }
+                  checkedIds={checkedIds}
+                  onToggleChecked={toggleChecked}
+                  onToggleCheckAll={toggleCheckAllVisible}
                   pinnedPaths={pinnedPaths}
                   onTogglePin={handleTogglePin}
                   pageSize={pageSize}
@@ -794,6 +988,23 @@ function PageContent() {
             config={config}
             onClose={closeVersions}
             onRestored={handleRefresh}
+          />
+        )}
+
+        {config && (
+          <CopyMoveDialog
+            // Remount per target so browsing resets to the current folder
+            // instead of resuming wherever the last picker was left.
+            key={
+              copyMoveTarget
+                ? `${copyMoveTarget.mode}:${copyMoveTarget.file.id}`
+                : 'none'
+            }
+            target={copyMoveTarget}
+            config={config}
+            startPath={currentPath}
+            onClose={() => setCopyMoveTarget(null)}
+            onDone={handleCopyMoveDone}
           />
         )}
       </SidebarInset>
