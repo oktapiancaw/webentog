@@ -43,6 +43,8 @@ import {
   PlugZap,
   Unplug,
   AlertCircle,
+  User as UserIcon,
+  Users as UsersIcon,
 } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
@@ -55,6 +57,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Sheet,
   SheetContent,
@@ -73,6 +82,16 @@ import {
   testConnection,
   type ConnectionConfig,
 } from '@/app/actions/object-management';
+import { getCurrentUser } from '@/app/actions/auth';
+import {
+  grantAccess,
+  listGrants,
+  revokeAccess,
+  type Grant,
+} from '@/app/actions/connection-grants';
+import { listUsers, type PublicUser } from '@/app/actions/users';
+import type { SessionPayload } from '@/lib/session';
+import Link from 'next/link';
 import {
   loadConnections,
   storeConnection,
@@ -80,6 +99,7 @@ import {
 } from '@/lib/storage-mode';
 import { toast } from 'sonner';
 import { toastError } from '@/lib/errors';
+import { unwrap } from '@/lib/action-result';
 import { cn, explainError, getLastNameFromPath } from '@/lib/utils';
 import { WebEntogLogo } from '@/components/logo';
 import type { ValidatedPinnedFolder } from '@/app/actions/pinned-folders';
@@ -134,10 +154,72 @@ export function AppSidebar({
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
+  // Null in non-persistent mode, where there are no users and no ownership.
+  const [currentUser, setCurrentUser] = useState<SessionPayload | null>(null);
+  const [accessFor, setAccessFor] = useState<ConnectionConfig | null>(null);
+  const [grants, setGrants] = useState<Grant[]>([]);
+  const [allUsers, setAllUsers] = useState<PublicUser[]>([]);
+  const [isAccessLoading, setIsAccessLoading] = useState(false);
+  const [grantUserId, setGrantUserId] = useState<string>('');
+
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
   const restoredRef = useRef(false);
+
+  useEffect(() => {
+    getCurrentUser()
+      .then(setCurrentUser)
+      .catch(() => setCurrentUser(null));
+  }, []);
+
+  /**
+   * Opens the access dialog for a connection. Both lists come from admin-only
+   * server actions, so a non-admin who forced this open would get errors
+   * rather than data.
+   */
+  const openAccess = async (conn: ConnectionConfig) => {
+    if (!conn.id) return;
+    setAccessFor(conn);
+    setGrantUserId('');
+    setIsAccessLoading(true);
+    try {
+      const [granted, users] = await Promise.all([
+        listGrants(conn.id),
+        listUsers(),
+      ]);
+      setGrants(granted);
+      setAllUsers(users);
+    } catch (error) {
+      toastError(error, 'Could not load access for this connection.');
+      setAccessFor(null);
+    } finally {
+      setIsAccessLoading(false);
+    }
+  };
+
+  const handleGrant = async () => {
+    if (!accessFor?.id || !grantUserId) return;
+    try {
+      unwrap(await grantAccess(accessFor.id, Number(grantUserId)));
+      setGrants(await listGrants(accessFor.id));
+      setGrantUserId('');
+      toast.success('Access granted.');
+    } catch (error) {
+      toastError(error, 'Could not grant access.');
+    }
+  };
+
+  const handleRevoke = async (userId: number) => {
+    if (!accessFor?.id) return;
+    try {
+      unwrap(await revokeAccess(accessFor.id, userId));
+      setGrants(await listGrants(accessFor.id));
+      toast.success('Access revoked.');
+    } catch (error) {
+      toastError(error, 'Could not revoke access.');
+    }
+  };
 
   const fetchConnections = async () => {
     const connections = await loadConnections();
@@ -311,6 +393,15 @@ export function AppSidebar({
                         </span>
                         <span className="w-full truncate font-mono text-[10px] text-muted-foreground">
                           {conn.bucket}
+                          {/* Only admins see every connection, so only they
+                              need telling whose it is. */}
+                          {currentUser?.role === 'admin' &&
+                            conn.owner_username &&
+                            conn.owner_id !== currentUser.userId && (
+                              <span className="ml-1.5 text-fog">
+                                · {conn.owner_username}
+                              </span>
+                            )}
                         </span>
                       </div>
                     </div>
@@ -326,6 +417,11 @@ export function AppSidebar({
                       <DropdownMenuItem onClick={() => openEdit(conn)}>
                         Edit config
                       </DropdownMenuItem>
+                      {currentUser?.role === 'admin' && (
+                        <DropdownMenuItem onClick={() => openAccess(conn)}>
+                          Manage access
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem
                         variant="destructive"
                         onClick={() => conn.id && setConfirmDeleteId(conn.id)}
@@ -426,7 +522,44 @@ export function AppSidebar({
           )}
         </SidebarContent>
 
-        <SidebarFooter className="border-t p-4">
+        <SidebarFooter className="gap-3 border-t p-4">
+          {/* Who you are, and (for an admin) the way into user management.
+              Both used to sit in the header; the header is for the path. */}
+          {currentUser && (
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="flex size-6 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground">
+                  <UserIcon className="size-3" />
+                </div>
+                <div className="flex min-w-0 flex-col">
+                  <span className="truncate text-[13px] text-strong">
+                    {currentUser.fullName || currentUser.username}
+                  </span>
+                  {/* With a display name set, the username still needs to be
+                      visible somewhere — it is what you sign in with. */}
+                  <span className="truncate font-mono text-[10px] text-muted-foreground">
+                    {currentUser.fullName
+                      ? `${currentUser.username} · ${currentUser.role}`
+                      : currentUser.role}
+                  </span>
+                </div>
+              </div>
+              {currentUser.role === 'admin' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  asChild
+                  className="h-7 shrink-0 text-[12px]"
+                >
+                  <Link href="/admin/users">
+                    <UsersIcon className="size-3.5" />
+                    Users
+                  </Link>
+                </Button>
+              )}
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
               Session
@@ -630,6 +763,83 @@ export function AppSidebar({
           </SheetFooter>
         </SheetContent>
       </Sheet>
+
+      {/* Manage access (admin only) */}
+      <Dialog
+        open={accessFor !== null}
+        onOpenChange={(open) => !open && setAccessFor(null)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Access to {accessFor?.name}</DialogTitle>
+            <DialogDescription className="text-[13px]">
+              A grant gives the same access the owner has. Pinned folders stay
+              private to each user either way.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4">
+            <div className="grid gap-1.5">
+              {isAccessLoading && (
+                <p className="text-[13px] text-muted-foreground">Loading…</p>
+              )}
+              {!isAccessLoading && grants.length === 0 && (
+                <p className="text-[13px] text-muted-foreground">
+                  Nobody else has access yet.
+                </p>
+              )}
+              {grants.map((grant) => (
+                <div
+                  key={grant.userId}
+                  className="flex items-center justify-between rounded-md border px-3 py-1.5"
+                >
+                  <span className="font-mono text-[13px] text-strong">
+                    {grant.username}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-destructive"
+                    onClick={() => handleRevoke(grant.userId)}
+                  >
+                    Revoke
+                  </Button>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Select value={grantUserId} onValueChange={setGrantUserId}>
+                <SelectTrigger className="h-9 flex-1 font-mono text-sm">
+                  <SelectValue placeholder="Add a user…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {allUsers
+                    // The owner already has it, and anyone already granted is
+                    // listed above.
+                    .filter(
+                      (u) =>
+                        u.id !== accessFor?.owner_id &&
+                        !grants.some((g) => g.userId === u.id)
+                    )
+                    .map((u) => (
+                      <SelectItem key={u.id} value={String(u.id)}>
+                        {u.username}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <Button
+                className="h-9"
+                disabled={!grantUserId}
+                onClick={handleGrant}
+              >
+                Grant
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
