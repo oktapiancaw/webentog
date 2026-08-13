@@ -15,6 +15,7 @@
 'use client';
 
 import { getPersistentMode } from '@/app/actions/auth';
+import { unwrap } from '@/lib/action-result';
 import {
   getConnections,
   saveConnection,
@@ -79,7 +80,7 @@ export async function storeConnection(
   config: ConnectionConfig
 ): Promise<{ id: number }> {
   if (await isPersistentStorage()) {
-    const { id } = await saveConnection(config);
+    const { id } = unwrap(await saveConnection(config));
     return { id: Number(id) };
   }
 
@@ -101,7 +102,7 @@ export async function storeConnection(
 
 export async function removeConnection(id: number): Promise<void> {
   if (await isPersistentStorage()) {
-    await deleteConnection(id);
+    unwrap(await deleteConnection(id));
     return;
   }
 
@@ -139,7 +140,8 @@ export async function addPin(
   connectionId: number,
   path: string
 ): Promise<{ id: number }> {
-  if (await isPersistentStorage()) return pinFolder(connectionId, path);
+  if (await isPersistentStorage())
+    return unwrap(await pinFolder(connectionId, path));
 
   const rows = read<PinnedFolder>(PINS_KEY);
   // Mirrors the table's UNIQUE(connection_id, path): re-pinning is a no-op.
@@ -233,7 +235,7 @@ export async function removePinsUnder(
 
 export async function removePin(id: number): Promise<void> {
   if (await isPersistentStorage()) {
-    await unpinFolder(id);
+    unwrap(await unpinFolder(id));
     return;
   }
   write(

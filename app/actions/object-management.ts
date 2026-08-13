@@ -16,14 +16,21 @@
 
 import type { Operator } from 'opendal';
 import { getOperator } from '@/lib/opendal';
-import { getDb } from '@/lib/db';
+import { getDb, insertAndGetId } from '@/lib/db';
+import type { UserRole } from '@/lib/db/types';
+import { getCurrentUser } from './auth';
+import { attempt, type ActionResult } from '@/lib/action-result';
 import {
+  basename,
   classifyVersionListFailure,
   cursorAfterKey,
   fileTypeFromName,
   explainError,
+  folderPrefix,
   formatStorage,
   isPermissionDenied,
+  joinFolder,
+  parentPrefix,
   replaceLastSegment,
   validateObjectName,
   type FileType,
@@ -47,6 +54,10 @@ export interface ConnectionConfig {
   secretKey: string;
   bucket: string;
   region: string;
+  /** Set by the server on read; ignored on write, where the actor owns it. */
+  owner_id?: number | null;
+  /** Joined for the admin view so connections can be labelled by owner. */
+  owner_username?: string | null;
 }
 
 /**
@@ -57,48 +68,94 @@ export interface ConnectionConfig {
  * nothing for an `ON CONFLICT` upsert to match on — this has to be an explicit
  * branch.
  */
-export async function saveConnection(config: ConnectionConfig) {
-  try {
-    const { id, name, endpoint, accessKey, secretKey, bucket, region } = config;
-    const db = getDb();
-    const values = [
-      name || 'Unnamed Connection',
-      endpoint,
-      accessKey,
-      secretKey,
-      bucket,
-      region,
-    ];
+export async function saveConnection(
+  config: ConnectionConfig
+): Promise<ActionResult<{ id: number | bigint }>> {
+  return attempt(
+    'Save Connection Error',
+    'Could not save that connection.',
+    async () => {
+      const actor = await requireUser();
+      const { id, name, endpoint, accessKey, secretKey, bucket, region } =
+        config;
+      const { db, type } = await getDb();
+      const values = {
+        name: name || 'Unnamed Connection',
+        endpoint,
+        accessKey,
+        secretKey,
+        bucket,
+        region,
+      };
 
-    if (id) {
-      const result = db
-        .prepare(
-          `UPDATE connections
-             SET name = ?, endpoint = ?, accessKey = ?, secretKey = ?, bucket = ?, region = ?
-           WHERE id = ?`
-        )
-        .run(...values, id);
-      // Falling back to an INSERT here would answer "this row is gone" by
-      // quietly making a new one under a different id, which is the duplicate
-      // bug again wearing a different hat.
-      if (result.changes === 0) {
-        throw new Error(
-          'This connection no longer exists. It may have been deleted in another tab.'
-        );
+      if (id) {
+        // Editing somebody else's connection is refused outright rather than
+        // silently updating nothing: a bare id is easy to guess, and this row
+        // holds bucket credentials.
+        await assertMayAdminister(id, actor);
+        const result = await db
+          .updateTable('connections')
+          .set(values)
+          .where('id', '=', id)
+          .executeTakeFirst();
+        // Falling back to an INSERT here would answer "this row is gone" by
+        // quietly making a new one under a different id, which is the duplicate
+        // bug again wearing a different hat.
+        if (Number(result.numUpdatedRows) === 0) {
+          throw new Error(
+            'This connection no longer exists. It may have been deleted in another tab.'
+          );
+        }
+        return { id };
       }
-      return { id };
-    }
 
-    const result = db
-      .prepare(
-        `INSERT INTO connections (name, endpoint, accessKey, secretKey, bucket, region)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      )
-      .run(...values);
-    return { id: result.lastInsertRowid };
-  } catch (error) {
-    console.error('Save Connection Error:', error);
-    throw storageError(error, 'Could not save that connection.');
+      return {
+        id: await insertAndGetId(
+          db
+            .insertInto('connections')
+            .values({ ...values, owner_id: actor.userId }),
+          type
+        ),
+      };
+    }
+  );
+}
+
+/**
+ * The signed-in user, or a thrown error.
+ *
+ * Identity is read from the session cookie inside each action, never accepted
+ * as a parameter — a server action is an HTTP endpoint, so a caller-supplied
+ * role is a role the caller picked.
+ *
+ * In non-persistent mode there is no users table and no server-side identity,
+ * so ownership does not apply; `NO_OWNERSHIP` stands in and every row is
+ * reachable, exactly as before this feature existed.
+ */
+const NO_OWNERSHIP = { userId: 0, role: 'admin' as const };
+
+async function requireUser(): Promise<{ userId: number; role: UserRole }> {
+  if (process.env.PERSISTENT_CONNECTION === 'false') return NO_OWNERSHIP;
+  const user = await getCurrentUser();
+  if (!user) throw new Error('You are not signed in.');
+  return { userId: user.userId, role: user.role };
+}
+
+/** Owner or admin. Grantees can use a connection but not edit or delete it. */
+async function assertMayAdminister(
+  connectionId: number,
+  actor: { userId: number; role: UserRole }
+): Promise<void> {
+  if (actor.role === 'admin') return;
+  const { db } = await getDb();
+  const row = await db
+    .selectFrom('connections')
+    .select('owner_id')
+    .where('id', '=', connectionId)
+    .executeTakeFirst();
+  if (!row) throw new Error('This connection no longer exists.');
+  if (row.owner_id !== actor.userId) {
+    throw new Error('This connection belongs to someone else.');
   }
 }
 
@@ -139,58 +196,87 @@ export async function testConnection(
   }
 }
 
+/**
+ * The connections the signed-in user may see.
+ *
+ * These rows carry secret keys, so the filter is the security boundary: an
+ * admin gets everything (with the owner's name, so duplicates across users are
+ * spottable), and everyone else gets what they own plus what they have been
+ * granted — never a directory of other people's connections.
+ */
 export async function getConnections(): Promise<ConnectionConfig[]> {
   try {
-    const stmt = getDb().prepare(
-      'SELECT * FROM connections ORDER BY created_at DESC'
-    );
-    return stmt.all() as ConnectionConfig[];
+    const actor = await requireUser();
+    const { db } = await getDb();
+
+    let query = db
+      .selectFrom('connections')
+      .leftJoin('users', 'users.id', 'connections.owner_id')
+      .select([
+        'connections.id as id',
+        'connections.name as name',
+        'connections.endpoint as endpoint',
+        'connections.accessKey as accessKey',
+        'connections.secretKey as secretKey',
+        'connections.bucket as bucket',
+        'connections.region as region',
+        'connections.owner_id as owner_id',
+        'users.username as owner_username',
+      ])
+      .orderBy('connections.created_at', 'desc');
+
+    if (actor.role !== 'admin') {
+      query = query.where((eb) =>
+        eb.or([
+          eb('connections.owner_id', '=', actor.userId),
+          eb.exists(
+            eb
+              .selectFrom('connection_grants')
+              .select('connection_grants.id')
+              .whereRef(
+                'connection_grants.connection_id',
+                '=',
+                'connections.id'
+              )
+              .where('connection_grants.user_id', '=', actor.userId)
+          ),
+        ])
+      );
+    }
+
+    return await query.execute();
   } catch (error) {
+    // Read paths degrade quietly here, as they do elsewhere in this file. An
+    // empty sidebar is the safe direction to fail: it shows too little rather
+    // than too much.
     console.error('Get Connections Error:', error);
     return [];
   }
 }
 
-export async function deleteConnection(id: number) {
-  try {
-    const stmt = getDb().prepare('DELETE FROM connections WHERE id = ?');
-    stmt.run(id);
-    return { success: true };
-  } catch (error) {
-    console.error('Delete Connection Error:', error);
-    throw new Error('Could not delete that connection.');
-  }
-}
-export async function uploadFiles(
-  config: ConnectionConfig,
-  formData: FormData,
-  folderPath: string
-) {
-  const op = getOperator(config);
-
-  const files = formData.getAll('files') as File[];
-  if (!files.length) throw new Error('No files were provided.');
-
-  const results = [];
-  const folderPath_ = folderPath.endsWith('/') ? folderPath : folderPath + '/';
-
-  for (const file of files) {
-    if (file.size > 10 * 1024 * 1024)
-      throw new Error(`${file.name} is larger than the 10MB upload limit.`);
-
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const path = `${folderPath_}${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
-
-    try {
-      await op.write(path, buffer);
-      results.push({ name: file.name, path, success: true });
-    } catch (error) {
-      console.error(`Failed to upload ${file.name}:`, error);
-      results.push({ name: file.name, success: false });
+export async function deleteConnection(
+  id: number
+): Promise<ActionResult<true>> {
+  return attempt(
+    'Delete Connection Error',
+    'Could not delete that connection.',
+    async () => {
+      const actor = await requireUser();
+      await assertMayAdminister(id, actor);
+      const { db } = await getDb();
+      // No foreign keys in this schema, so grants and pins are cleaned up here.
+      await db
+        .deleteFrom('connection_grants')
+        .where('connection_id', '=', id)
+        .execute();
+      await db
+        .deleteFrom('pinned_folders')
+        .where('connection_id', '=', id)
+        .execute();
+      await db.deleteFrom('connections').where('id', '=', id).execute();
+      return true as const;
     }
-  }
-
-  return { success: results.some((r) => r.success), uploads: results };
+  );
 }
 export interface FormattedFile {
   id: string;
@@ -586,6 +672,56 @@ export async function restoreObjectVersion(
   }
 }
 
+/**
+ * Above this, a version is not previewed inline.
+ *
+ * The bytes come back through the action payload as base64, which inflates
+ * them by a third and buffers the whole object in memory on both ends. That is
+ * an acceptable trade for looking at a photo and a bad one for a 200MB video,
+ * so there is a line.
+ */
+const MAX_VERSION_PREVIEW_BYTES = 8 * 1024 * 1024;
+
+/**
+ * One old version of an object, as a data URL.
+ *
+ * A presigned URL would be the obvious transport and cannot be used:
+ * `presignRead(path, expires)` takes no options, so there is nowhere to put a
+ * version id, and appending `?versionId=` to a signed URL invalidates the
+ * signature. The bytes have to come through the server, which already holds
+ * the credentials.
+ */
+export async function getVersionPreview(
+  config: ConnectionConfig,
+  path: string,
+  versionId: string
+): Promise<ActionResult<{ dataUrl: string }>> {
+  return attempt(
+    'Version Preview Error',
+    'Could not load that version.',
+    async () => {
+      const op = getOperator(config);
+
+      // Checked before the read, not after: the point is to avoid pulling the
+      // object into memory at all when it is too big to show.
+      const meta = await op.stat(path, { version: versionId });
+      const size =
+        meta.contentLength !== null ? Number(meta.contentLength) : null;
+      if (size !== null && size > MAX_VERSION_PREVIEW_BYTES) {
+        throw new Error(
+          `That version is ${formatStorage(size)}, too large to preview here. Use "Save as" and open the copy.`
+        );
+      }
+
+      const bytes = await op.read(path, { version: versionId });
+      const type = meta.contentType || 'application/octet-stream';
+      return {
+        dataUrl: `data:${type};base64,${Buffer.from(bytes).toString('base64')}`,
+      };
+    }
+  );
+}
+
 /** Writes an old version out to a different key, leaving the original alone. */
 export async function saveObjectVersionAs(
   config: ConnectionConfig,
@@ -627,30 +763,41 @@ export async function saveObjectVersionAs(
   }
 }
 
-export async function deleteFile(config: ConnectionConfig, path: string) {
-  try {
-    const op = getOperator(config);
-    await op.delete(path);
-    return { success: true };
-  } catch (error) {
-    console.error('Delete File Error:', error);
-    throw new Error(
-      isPermissionDenied(error)
-        ? 'These credentials cannot delete objects.'
-        : explainError(error, 'Could not delete that file.').message
-    );
-  }
+export async function deleteFile(
+  config: ConnectionConfig,
+  path: string
+): Promise<ActionResult<true>> {
+  return attempt(
+    'Delete File Error',
+    'Could not delete that file.',
+    async () => {
+      const op = getOperator(config);
+      try {
+        await op.delete(path);
+      } catch (error) {
+        if (isPermissionDenied(error)) {
+          throw new Error('These credentials cannot delete objects.');
+        }
+        throw error;
+      }
+      return true as const;
+    }
+  );
 }
 
-export async function createFolder(config: ConnectionConfig, path: string) {
-  try {
-    const op = getOperator(config);
-    await op.createDir(path);
-    return { success: true };
-  } catch (error) {
-    console.error('Create Folder Error:', error);
-    throw storageError(error, 'Could not create that folder.');
-  }
+export async function createFolder(
+  config: ConnectionConfig,
+  path: string
+): Promise<ActionResult<true>> {
+  return attempt(
+    'Create Folder Error',
+    'Could not create that folder.',
+    async () => {
+      const op = getOperator(config);
+      await op.createDir(path);
+      return true as const;
+    }
+  );
 }
 
 /**
@@ -659,19 +806,26 @@ export async function createFolder(config: ConnectionConfig, path: string) {
  * `delete` is single-key, so a folder needs `removeAll`. The trailing slash is
  * enforced because `removeAll('a/b')` would also match a sibling key `a/bc`.
  */
-export async function deleteFolder(config: ConnectionConfig, path: string) {
-  try {
-    const op = getOperator(config);
-    await op.removeAll(path.endsWith('/') ? path : `${path}/`);
-    return { success: true };
-  } catch (error) {
-    console.error('Delete Folder Error:', error);
-    throw new Error(
-      isPermissionDenied(error)
-        ? 'These credentials cannot delete objects.'
-        : explainError(error, 'Could not delete that folder.').message
-    );
-  }
+export async function deleteFolder(
+  config: ConnectionConfig,
+  path: string
+): Promise<ActionResult<true>> {
+  return attempt(
+    'Delete Folder Error',
+    'Could not delete that folder.',
+    async () => {
+      const op = getOperator(config);
+      try {
+        await op.removeAll(path.endsWith('/') ? path : `${path}/`);
+      } catch (error) {
+        if (isPermissionDenied(error)) {
+          throw new Error('These credentials cannot delete objects.');
+        }
+        throw error;
+      }
+      return true as const;
+    }
+  );
 }
 
 /**
@@ -729,6 +883,56 @@ async function moveObject(
   await op.delete(from);
 }
 
+/**
+ * Reproduces every key under `fromPrefix` at `toPrefix`, removing the
+ * originals when `remove` is set.
+ *
+ * A directory operation is not one call: S3 has no recursive copy, so each key
+ * is visited individually. Cost scales with object count, not folder size,
+ * since the copies are server-side.
+ *
+ * Sequential rather than Promise.all: a mid-walk failure leaves a legible
+ * partial state instead of hundreds of concurrent calls landing in unknown
+ * order. There is no progress UI and no cancel — same accepted tradeoff as the
+ * full-bucket scan elsewhere in this file.
+ *
+ * Rename, copy-into and move-into all reduce to this, differing only in
+ * `remove` and in where `toPrefix` points.
+ */
+async function transferTree(
+  op: InstanceType<typeof Operator>,
+  fromPrefix: string,
+  toPrefix: string,
+  remove: boolean
+) {
+  const entries = await op.list(fromPrefix, { recursive: true });
+  // An empty folder has no children to imply the new prefix, so it needs a
+  // marker of its own or the operation would look like a delete.
+  await op.createDir(toPrefix);
+
+  const markers: string[] = [fromPrefix];
+  for (const entry of entries) {
+    const key = entry.path();
+    if (!key.startsWith(fromPrefix)) continue; // defensive, should always hold
+    if (key === fromPrefix) continue; // the folder itself, already handled
+    const target = toPrefix + key.slice(fromPrefix.length);
+    // Directory markers are zero-byte keys. Children imply their own prefixes,
+    // but an *empty* subfolder has none — so recreate the marker rather than
+    // letting the subfolder vanish, and collect the old one to drop at the end.
+    if (key.endsWith('/')) {
+      markers.push(key);
+      await op.createDir(target);
+      continue;
+    }
+    if (remove) await moveObject(op, key, target);
+    else await op.copy(key, target);
+  }
+
+  // Only the markers this walk saw. A blind removeAll(fromPrefix) here would
+  // also wipe anything uploaded into the old folder while the walk ran.
+  if (remove) await op.remove(markers);
+}
+
 /** True if anything lives under `prefix`. Stops at the first hit. */
 async function hasAnyChild(
   op: InstanceType<typeof Operator>,
@@ -743,13 +947,6 @@ async function hasAnyChild(
   return false;
 }
 
-/** The folder a key sits in, with its trailing slash; '' at the bucket root. */
-function parentPrefix(key: string): string {
-  const stripped = key.endsWith('/') ? key.slice(0, -1) : key;
-  const cut = stripped.lastIndexOf('/');
-  return cut === -1 ? '' : stripped.slice(0, cut + 1);
-}
-
 function resolveRename(path: string, newName: string): string {
   const invalid = validateObjectName(newName);
   if (invalid) throw new Error(invalid);
@@ -760,26 +957,28 @@ export async function renameFile(
   config: ConnectionConfig,
   path: string,
   newName: string
-) {
-  const toPath = resolveRename(path, newName);
-  try {
-    const op = getOperator(config);
-    if (await op.exists(toPath)) {
-      throw new Error(`An object named "${newName.trim()}" already exists.`);
+): Promise<ActionResult<{ path: string }>> {
+  return attempt(
+    'Rename File Error',
+    'Could not rename that file.',
+    async () => {
+      const toPath = resolveRename(path, newName);
+      const op = getOperator(config);
+      if (await op.exists(toPath)) {
+        throw new Error(`An object named "${newName.trim()}" already exists.`);
+      }
+      await assertCanDelete(op, parentPrefix(path));
+      try {
+        await moveObject(op, path, toPath);
+      } catch (error) {
+        if (isPermissionDenied(error)) {
+          throw new Error('These credentials cannot rename this object.');
+        }
+        throw error;
+      }
+      return { path: toPath };
     }
-    await assertCanDelete(op, parentPrefix(path));
-    await moveObject(op, path, toPath);
-    return { success: true, path: toPath };
-  } catch (error) {
-    console.error('Rename File Error:', error);
-    if (error instanceof Error && error.message === NO_DELETE_PERMISSION)
-      throw error;
-    if (isPermissionDenied(error))
-      throw new Error('These credentials cannot rename this object.');
-    throw error instanceof Error && error.message.startsWith('An object named')
-      ? error
-      : storageError(error, 'Could not rename that file.');
-  }
+  );
 }
 
 /**
@@ -797,54 +996,159 @@ export async function renameFolder(
   config: ConnectionConfig,
   path: string,
   newName: string
-) {
-  const fromPrefix = path.endsWith('/') ? path : `${path}/`;
-  const toPath = resolveRename(fromPrefix, newName);
-  const toPrefix = toPath.endsWith('/') ? toPath : `${toPath}/`;
+): Promise<ActionResult<{ path: string }>> {
+  return attempt(
+    'Rename Folder Error',
+    // A mid-walk failure is possible, so the generic case says so rather than
+    // implying nothing happened.
+    'Failed to rename folder. Some files may have already moved — refresh to check the current state.',
+    async () => {
+      const fromPrefix = path.endsWith('/') ? path : `${path}/`;
+      const toPath = resolveRename(fromPrefix, newName);
+      const toPrefix = toPath.endsWith('/') ? toPath : `${toPath}/`;
 
-  try {
-    const op = getOperator(config);
-    // exists() only sees an explicit directory marker, and most S3 folders are
-    // implicit. Renaming onto one would merge the two and overwrite same-named
-    // files with no warning, so probe for any child instead.
-    if (await hasAnyChild(op, toPrefix)) {
-      throw new Error(`A folder named "${newName.trim()}" already exists.`);
-    }
-
-    // Before the first copy: a half-renamed folder is bad, and one the user
-    // cannot delete either is worse.
-    await assertCanDelete(op, fromPrefix);
-
-    const entries = await op.list(fromPrefix, { recursive: true });
-    // An empty folder has nothing to move, so the new prefix needs a marker of
-    // its own or the rename would look like a delete.
-    await op.createDir(toPrefix);
-
-    const markers: string[] = [fromPrefix];
-    for (const entry of entries) {
-      const key = entry.path();
-      if (!key.startsWith(fromPrefix)) continue; // defensive, should always hold
-      // Directory markers are zero-byte keys. The renamed children imply the
-      // new prefixes, so collect the old markers and drop them at the end.
-      if (key.endsWith('/')) {
-        markers.push(key);
-        continue;
+      const op = getOperator(config);
+      // exists() only sees an explicit directory marker, and most S3 folders are
+      // implicit. Renaming onto one would merge the two and overwrite same-named
+      // files with no warning, so probe for any child instead.
+      if (await hasAnyChild(op, toPrefix)) {
+        throw new Error(`A folder named "${newName.trim()}" already exists.`);
       }
-      await moveObject(op, key, toPrefix + key.slice(fromPrefix.length));
-    }
 
-    // Only the markers this walk saw. A blind removeAll(fromPrefix) here would
-    // also wipe anything uploaded into the old folder while the rename ran.
-    await op.remove(markers);
-    return { success: true, path: toPrefix };
-  } catch (error) {
-    console.error('Rename Folder Error:', error);
-    if (error instanceof Error && error.message === NO_DELETE_PERMISSION)
-      throw error;
-    throw error instanceof Error && error.message.startsWith('A folder named')
-      ? error
-      : new Error(
-          'Failed to rename folder. Some files may have already moved — refresh to check the current state.'
-        );
+      // Before the first copy: a half-renamed folder is bad, and one the user
+      // cannot delete either is worse.
+      await assertCanDelete(op, fromPrefix);
+
+      await transferTree(op, fromPrefix, toPrefix, true);
+      return { path: toPrefix };
+    }
+  );
+}
+
+/**
+ * Puts one file into `destFolder` under the same name.
+ *
+ * Copy and move share a body because they differ by exactly one delete: S3 has
+ * no move, so a move is the same server-side CopyObject followed by removing
+ * the original — the shape `moveObject` already implements for rename.
+ */
+async function transferFile(
+  op: InstanceType<typeof Operator>,
+  sourcePath: string,
+  destFolder: string,
+  remove: boolean
+): Promise<string> {
+  const name = basename(sourcePath);
+  const destPath = joinFolder(destFolder, name);
+
+  // Landing on itself is a same-key copy, which overwrites the source with the
+  // source — harmless but pointless for a move, and destructive-looking enough
+  // for a copy to be worth refusing rather than silently doing nothing.
+  if (destPath === sourcePath) {
+    throw new Error(`"${name}" is already in that folder.`);
   }
+  if (await op.exists(destPath)) {
+    throw new Error(`"${name}" already exists in that folder.`);
+  }
+
+  if (!remove) {
+    await op.copy(sourcePath, destPath);
+    return destPath;
+  }
+
+  // Before the first copy: a moved file that could not be cleaned up at the
+  // source is a duplicate the same credentials cannot remove either.
+  await assertCanDelete(op, parentPrefix(sourcePath));
+  await moveObject(op, sourcePath, destPath);
+  return destPath;
+}
+
+/** Same, for a folder and everything under it. */
+async function transferFolder(
+  op: InstanceType<typeof Operator>,
+  sourcePath: string,
+  destFolder: string,
+  remove: boolean
+): Promise<string> {
+  const name = basename(sourcePath);
+  const fromPrefix = folderPrefix(sourcePath);
+  const toPrefix = folderPrefix(joinFolder(destFolder, name));
+
+  if (toPrefix === fromPrefix) {
+    throw new Error(`"${name}" is already in that folder.`);
+  }
+  // A destination under the source is a walk that keeps generating its own
+  // input. The picker greys these out, but a server action is reachable
+  // without it, so this is the check that counts.
+  if (toPrefix.startsWith(fromPrefix)) {
+    throw new Error(
+      `Cannot ${remove ? 'move' : 'copy'} a folder into itself or one of its own subfolders.`
+    );
+  }
+  // exists() only sees an explicit directory marker, and most S3 folders are
+  // implicit. Landing on one would merge the two and overwrite same-named files
+  // with no warning, so probe for any child instead.
+  if (await hasAnyChild(op, toPrefix)) {
+    throw new Error(`"${name}" already exists in that folder.`);
+  }
+
+  if (remove) await assertCanDelete(op, fromPrefix);
+  await transferTree(op, fromPrefix, toPrefix, remove);
+  return toPrefix;
+}
+
+/**
+ * Copy / move take `destFolder` and derive the key, never a caller-supplied
+ * destination path — the same reason rename takes a name and not a path. The
+ * name always comes from the source, so neither can turn into a rename.
+ *
+ * One pair of actions rather than the four the plan sketched
+ * (copyFile/moveFile/copyFolder/moveFolder): the four bodies differed only in
+ * `remove` and in which helper ran, which the client already has to decide
+ * either way.
+ */
+export async function copyObjectTo(
+  config: ConnectionConfig,
+  sourcePath: string,
+  destFolder: string,
+  isFolder: boolean
+): Promise<ActionResult<{ path: string }>> {
+  return attempt(
+    'Copy Object Error',
+    isFolder
+      ? 'Could not copy that folder. Some files may have already been copied — refresh to check the current state.'
+      : 'Could not copy that file.',
+    async () => {
+      const op = getOperator(config);
+      return {
+        path: isFolder
+          ? await transferFolder(op, sourcePath, destFolder, false)
+          : await transferFile(op, sourcePath, destFolder, false),
+      };
+    }
+  );
+}
+
+export async function moveObjectTo(
+  config: ConnectionConfig,
+  sourcePath: string,
+  destFolder: string,
+  isFolder: boolean
+): Promise<ActionResult<{ path: string }>> {
+  return attempt(
+    'Move Object Error',
+    // A mid-walk failure is possible, so the generic case says so rather than
+    // implying nothing happened.
+    isFolder
+      ? 'Could not move that folder. Some files may have already moved — refresh to check the current state.'
+      : 'Could not move that file.',
+    async () => {
+      const op = getOperator(config);
+      return {
+        path: isFolder
+          ? await transferFolder(op, sourcePath, destFolder, true)
+          : await transferFile(op, sourcePath, destFolder, true),
+      };
+    }
+  );
 }

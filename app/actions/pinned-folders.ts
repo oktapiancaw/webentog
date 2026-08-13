@@ -15,7 +15,9 @@
 'use server';
 
 import { getOperator } from '@/lib/opendal';
-import { getDb } from '@/lib/db';
+import { getCurrentUser } from './auth';
+import { attempt, type ActionResult } from '@/lib/action-result';
+import { getDb, insertAndGetId, isUniqueViolation } from '@/lib/db';
 import type { ConnectionConfig } from './object-management';
 
 export interface PinnedFolder {
@@ -30,38 +32,71 @@ export interface ValidatedPinnedFolder extends PinnedFolder {
   exists: boolean;
 }
 
+/**
+ * The signed-in user's id, for scoping pins.
+ *
+ * Read from the cookie rather than taken as an argument: a caller-supplied id
+ * would let any signed-in user read or delete somebody else's bookmarks.
+ * Non-persistent mode has no users at all, so pins there share id 0 exactly as
+ * they shared one list before.
+ */
+async function currentUserId(): Promise<number> {
+  if (process.env.PERSISTENT_CONNECTION === 'false') return 0;
+  const user = await getCurrentUser();
+  if (!user) throw new Error('You are not signed in.');
+  return user.userId;
+}
+
 export async function pinFolder(
   connectionId: number,
   path: string
-): Promise<{ id: number }> {
-  try {
-    const result = getDb()
-      .prepare('INSERT INTO pinned_folders (connection_id, path) VALUES (?, ?)')
-      .run(connectionId, path);
-    return { id: Number(result.lastInsertRowid) };
-  } catch (error) {
-    // Already pinned: a stray double-click is a no-op, not an error.
-    if (error instanceof Error && error.message.includes('UNIQUE')) {
-      const existing = getDb()
-        .prepare(
-          'SELECT id FROM pinned_folders WHERE connection_id = ? AND path = ?'
-        )
-        .get(connectionId, path) as { id: number } | undefined;
-      if (existing) return { id: existing.id };
+): Promise<ActionResult<{ id: number }>> {
+  return attempt('Pin Folder Error', 'Could not pin that folder.', async () => {
+    const userId = await currentUserId();
+    const { db, type } = await getDb();
+    try {
+      const id = await insertAndGetId(
+        db.insertInto('pinned_folders').values({
+          connection_id: connectionId,
+          user_id: userId,
+          path,
+        }),
+        type
+      );
+      return { id };
+    } catch (error) {
+      // Already pinned: a stray double-click is a no-op, not an error.
+      if (isUniqueViolation(error, type)) {
+        const existing = await db
+          .selectFrom('pinned_folders')
+          .select('id')
+          .where('connection_id', '=', connectionId)
+          .where('user_id', '=', userId)
+          .where('path', '=', path)
+          .executeTakeFirst();
+        if (existing) return { id: existing.id };
+      }
+      throw error;
     }
-    console.error('Pin Folder Error:', error);
-    throw new Error('Could not pin that folder.');
-  }
+  });
 }
 
-export async function unpinFolder(id: number): Promise<{ success: true }> {
-  try {
-    getDb().prepare('DELETE FROM pinned_folders WHERE id = ?').run(id);
-    return { success: true };
-  } catch (error) {
-    console.error('Unpin Folder Error:', error);
-    throw new Error('Could not unpin that folder.');
-  }
+export async function unpinFolder(id: number): Promise<ActionResult<true>> {
+  return attempt(
+    'Unpin Folder Error',
+    'Could not unpin that folder.',
+    async () => {
+      const userId = await currentUserId();
+      const { db } = await getDb();
+      // Scoped to the owner so a guessed id cannot remove somebody else's pin.
+      await db
+        .deleteFrom('pinned_folders')
+        .where('id', '=', id)
+        .where('user_id', '=', userId)
+        .execute();
+      return true as const;
+    }
+  );
 }
 
 /**
@@ -78,10 +113,17 @@ export async function unpinFoldersUnder(
   path: string
 ): Promise<string[]> {
   try {
-    const db = getDb();
-    const rows = db
-      .prepare('SELECT id, path FROM pinned_folders WHERE connection_id = ?')
-      .all(connectionId) as { id: number; path: string }[];
+    const userId = await currentUserId();
+    const { db } = await getDb();
+    // Only the acting user's own pins. Another user's bookmark on the same
+    // deleted folder is left alone — they did not do the deleting, and the
+    // existing "missing" state is how that surfaces to them.
+    const rows = await db
+      .selectFrom('pinned_folders')
+      .select(['id', 'path'])
+      .where('connection_id', '=', connectionId)
+      .where('user_id', '=', userId)
+      .execute();
 
     const prefix = path.endsWith('/') ? path : `${path}/`;
     const doomed = rows.filter(
@@ -89,8 +131,14 @@ export async function unpinFoldersUnder(
     );
     if (doomed.length === 0) return [];
 
-    const del = db.prepare('DELETE FROM pinned_folders WHERE id = ?');
-    for (const row of doomed) del.run(row.id);
+    await db
+      .deleteFrom('pinned_folders')
+      .where(
+        'id',
+        'in',
+        doomed.map((row) => row.id)
+      )
+      .execute();
     return doomed.map((row) => row.path);
   } catch (error) {
     // The folder is already deleted either way; a stale pin renders as
@@ -136,11 +184,15 @@ export async function getPinnedFolders(
   if (!config.id) return [];
 
   try {
-    const rows = getDb()
-      .prepare(
-        'SELECT * FROM pinned_folders WHERE connection_id = ? ORDER BY created_at ASC'
-      )
-      .all(config.id) as PinnedFolder[];
+    const userId = await currentUserId();
+    const { db } = await getDb();
+    const rows = await db
+      .selectFrom('pinned_folders')
+      .selectAll()
+      .where('connection_id', '=', config.id)
+      .where('user_id', '=', userId)
+      .orderBy('created_at', 'asc')
+      .execute();
 
     if (rows.length === 0) return [];
 
@@ -149,7 +201,13 @@ export async function getPinnedFolders(
       rows.map((row) => row.path)
     );
 
-    return rows.map((row, i) => ({ ...row, exists: flags[i] }));
+    // Postgres and MySQL hand back a Date where SQLite hands back a string,
+    // and this crosses to a client component, so normalise it here.
+    return rows.map((row, i) => ({
+      ...row,
+      created_at: String(row.created_at),
+      exists: flags[i],
+    }));
   } catch (error) {
     console.error('Get Pinned Folders Error:', error);
     return []; // mirrors getConnections: read paths degrade, never throw

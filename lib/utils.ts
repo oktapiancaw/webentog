@@ -152,7 +152,7 @@ export interface ExplainedError {
  */
 export function explainError(
   error: unknown,
-  fallback = 'Something went wrong.'
+  fallback?: string
 ): ExplainedError {
   const raw = error instanceof Error ? error.message : String(error ?? '');
 
@@ -185,13 +185,15 @@ export function explainError(
     };
   }
 
-  // React strips server-side messages in production and leaves only a numbered
-  // stub, so there is nothing useful to show beyond "it failed on the server".
+  // React strips server-side messages from production bundles and leaves a
+  // numbered stub, so `raw` carries nothing. The caller's fallback describes
+  // what was being attempted and is always the better line — "Could not delete
+  // that connection" beats "the server hit an error".
   if (
     /Minified React error|An error occurred in the Server Components/i.test(raw)
   ) {
     return {
-      message: 'The server hit an error handling that request.',
+      message: fallback ?? 'The server hit an error handling that request.',
       unexpected: true,
     };
   }
@@ -208,7 +210,7 @@ export function explainError(
     return { message: curated, unexpected: false };
   }
 
-  return { message: fallback, unexpected: true };
+  return { message: fallback ?? 'Something went wrong.', unexpected: true };
 }
 
 /**
@@ -241,6 +243,52 @@ export function replaceLastSegment(key: string, name: string): string {
   const cut = stripped.lastIndexOf('/');
   const parent = cut === -1 ? '' : stripped.slice(0, cut + 1);
   return `${parent}${name}${key.endsWith('/') ? '/' : ''}`;
+}
+
+/**
+ * Entrance for UI that is conditionally rendered in place — a toolbar, a
+ * warning, an inline confirm.
+ *
+ * These push the layout around when they appear, and appearing instantly reads
+ * as a glitch rather than a response to the click that caused it. Kept in one
+ * place so every such reveal moves the same way; Radix-driven surfaces
+ * (dialogs, dropdowns) have their own `data-[state=open]` variants and do not
+ * use this.
+ */
+export const REVEAL_ANIMATION =
+  'animate-in fade-in-0 slide-in-from-top-1 duration-200';
+
+/** Last segment of a key, ignoring any trailing slash. `a/b/c/` -> `c` */
+export function basename(key: string): string {
+  const stripped = key.endsWith('/') ? key.slice(0, -1) : key;
+  const cut = stripped.lastIndexOf('/');
+  return cut === -1 ? stripped : stripped.slice(cut + 1);
+}
+
+/** The folder a key sits in, with its trailing slash; '' at the bucket root. */
+export function parentPrefix(key: string): string {
+  const stripped = key.endsWith('/') ? key.slice(0, -1) : key;
+  const cut = stripped.lastIndexOf('/');
+  return cut === -1 ? '' : stripped.slice(0, cut + 1);
+}
+
+/**
+ * Normalises a folder to the prefix its children carry: '' at the bucket root,
+ * otherwise one trailing slash and no leading one.
+ *
+ * The app has three spellings for the same folder — '/' from a fresh URL,
+ * 'a/b' from `?path=`, and 'a/b/' from a listing's `entry.path()`. Comparing
+ * them raw is how a destination check quietly stops matching.
+ */
+export function folderPrefix(folder: string): string {
+  const trimmed = folder.replace(/^\/+/, '');
+  if (!trimmed) return '';
+  return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
+}
+
+/** The key `name` would take inside `folder`. */
+export function joinFolder(folder: string, name: string): string {
+  return `${folderPrefix(folder)}${name}`;
 }
 
 /** Rows-per-page choices, and the allowlist for `?size=`. */
