@@ -15,7 +15,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Loader2, RotateCcw, SaveIcon } from 'lucide-react';
+import { Eye, EyeOff, Loader2, RotateCcw, SaveIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { toastError } from '@/lib/errors';
 import { explainError } from '@/lib/utils';
@@ -30,6 +30,7 @@ import {
 } from '@/components/ui/dialog';
 import type { FileItem } from '@/components/app-browser';
 import {
+  getVersionPreview,
   listObjectVersions,
   restoreObjectVersion,
   saveObjectVersionAs,
@@ -37,7 +38,8 @@ import {
   type ListObjectVersionsResult,
   type ObjectVersion,
 } from '@/app/actions/object-management';
-import { cn } from '@/lib/utils';
+import { cn, REVEAL_ANIMATION } from '@/lib/utils';
+import { unwrap } from '@/lib/action-result';
 
 interface VersionHistoryDialogProps {
   /** null closes the dialog and drives its open state. */
@@ -87,6 +89,40 @@ export function VersionHistoryDialog({
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
   const [saveAsRow, setSaveAsRow] = useState<string | null>(null);
   const [saveAsName, setSaveAsName] = useState('');
+
+  // Images only, and one at a time: each open preview holds a whole decoded
+  // object in memory, so keeping several would stack them up.
+  const isImage = file?.type === 'image';
+  const [previewRow, setPreviewRow] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState('');
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  const togglePreview = async (version: ObjectVersion, key: string) => {
+    if (previewRow === key) return setPreviewRow(null); // click again to close
+    if (!file || !version.versionId) return;
+
+    setConfirmRestore(null);
+    setSaveAsRow(null);
+    setPreviewRow(key);
+    setPreviewUrl(null);
+    setPreviewError('');
+    setPreviewLoading(true);
+    try {
+      const { dataUrl } = unwrap(
+        await getVersionPreview(config, file.id, version.versionId)
+      );
+      setPreviewUrl(dataUrl);
+    } catch (err) {
+      // Inline rather than a toast: the message is about the row the user is
+      // looking at, and the size refusal points at "Save as" right next to it.
+      setPreviewError(
+        explainError(err, 'Could not load that version.').message
+      );
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
 
   const rowKey = (v: ObjectVersion, i: number) => v.versionId ?? `idx-${i}`;
 
@@ -276,12 +312,24 @@ export function VersionHistoryDialog({
 
                     {!version.isDeleted && version.versionId && (
                       <div className="flex shrink-0 items-center gap-1">
+                        {isImage && (
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            disabled={isBusy}
+                            onClick={() => togglePreview(version, key)}
+                          >
+                            {previewRow === key ? <EyeOff /> : <Eye />}
+                            {previewRow === key ? 'Hide' : 'Preview'}
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="xs"
                           disabled={isBusy}
                           onClick={() => {
                             setConfirmRestore(null);
+                            setPreviewRow(null);
                             setSaveAsRow(key);
                             setSaveAsName(
                               suggestCopyName(
@@ -302,6 +350,7 @@ export function VersionHistoryDialog({
                             disabled={isBusy}
                             onClick={() => {
                               setSaveAsRow(null);
+                              setPreviewRow(null);
                               setConfirmRestore(key);
                             }}
                           >
@@ -312,9 +361,39 @@ export function VersionHistoryDialog({
                     )}
                   </div>
 
+                  {previewRow === key && (
+                    <div className={cn('mt-2.5', REVEAL_ANIMATION)}>
+                      {previewLoading ? (
+                        <div className="flex items-center justify-center gap-2 rounded-md border border-dashed py-10 text-xs text-muted-foreground">
+                          <Loader2 className="size-4 animate-spin" />
+                          Loading this version…
+                        </div>
+                      ) : previewError ? (
+                        <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                          {previewError}
+                        </p>
+                      ) : (
+                        previewUrl && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={previewUrl}
+                            alt={`${file?.name} at version ${version.versionId}`}
+                            // next/image cannot help here: the source is a data
+                            // URL built server-side, so there is nothing for the
+                            // optimizer to fetch or cache.
+                            className="max-h-64 w-full rounded-md border bg-muted/30 object-contain"
+                          />
+                        )
+                      )}
+                    </div>
+                  )}
+
                   {saveAsRow === key && (
                     <form
-                      className="mt-2.5 flex items-center gap-2"
+                      className={cn(
+                        'mt-2.5 flex items-center gap-2',
+                        REVEAL_ANIMATION
+                      )}
                       onSubmit={(e) => {
                         e.preventDefault();
                         handleSaveAs(version);
@@ -347,7 +426,12 @@ export function VersionHistoryDialog({
                   )}
 
                   {confirmRestore === key && (
-                    <div className="mt-2.5 rounded-md bg-destructive px-3 py-2 text-white">
+                    <div
+                      className={cn(
+                        'mt-2.5 rounded-md bg-destructive px-3 py-2 text-white',
+                        REVEAL_ANIMATION
+                      )}
+                    >
                       {!likelyVersioned && (
                         <p className="mb-1.5 text-xs">
                           This bucket may not have versioning enabled. Restoring
