@@ -37,6 +37,9 @@ import {
   PencilLine,
   Copy as CopyIcon,
   FolderInput,
+  ArrowUp,
+  ArrowDown,
+  ExternalLink,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -52,21 +55,31 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
+import * as React from 'react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import {
   cn,
   copyToClipboard,
+  formatStorage,
   PAGE_SIZES,
   pageWindow,
   REVEAL_ANIMATION,
   validateObjectName,
   type FileType,
+  type SortColumn,
+  type SortDirection,
 } from '@/lib/utils';
 
 export type { FileType };
@@ -77,6 +90,8 @@ export interface FileItem {
   name: string;
   type: FileType;
   size: string;
+  /** Raw bytes behind `size`. Sort-only, never rendered. */
+  sizeBytes: number | null;
   lastModified: string;
 }
 
@@ -97,10 +112,21 @@ interface StorageBrowserProps {
   /** Both open the destination picker; the item keeps its name either way. */
   onCopyRequest?: (file: FileItem) => void;
   onMoveRequest?: (file: FileItem) => void;
+  /** Folders only — opens this browser in a second tab at that folder. */
+  onOpenInNewTab?: (file: FileItem) => void;
   /** Bulk-action selection. Separate from `selectedId`, which is the preview. */
   checkedIds: Set<string>;
   onToggleChecked: (file: FileItem) => void;
   onToggleCheckAll: () => void;
+  /** null = the server's default order. */
+  sortColumn: SortColumn | null;
+  sortDirection: SortDirection;
+  onSortClick: (column: SortColumn) => void;
+  /**
+   * False while only one page of a large folder is in memory. Sorting then
+   * would reorder 20 rows and look like it reordered the folder.
+   */
+  canSort: boolean;
   /** Keyed by S3 key (FileItem.id), matching what the pins table stores. */
   pinnedPaths?: Set<string>;
   onTogglePin?: (file: FileItem) => void;
@@ -116,10 +142,35 @@ interface StorageBrowserProps {
   onGoToPage: (index: number) => void;
   onPageSizeChange: (size: number) => void;
   /** null until counted. Counting walks the whole folder, so it is opt-in. */
-  folderCount: { count: number; capped: boolean } | null;
+  folderCount: { count: number; totalBytes: number } | null;
   isCounting: boolean;
   onCount: () => void;
 }
+
+/**
+ * One row action, rendered into either menu.
+ *
+ * The row has two triggers now — the "..." button and right-click — and both
+ * must offer the same things. Describing the items once and rendering them
+ * twice is what stops the two from drifting apart on the next edit; they were
+ * hand-written JSX branches before, and duplicating those would have meant
+ * four branches to keep in step.
+ */
+interface RowAction {
+  key: string;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  onSelect: () => void;
+  destructive?: boolean;
+  separatorBefore?: boolean;
+}
+
+/** Header order, and the column each one sorts by. */
+const SORT_COLUMNS: { key: SortColumn; label: string }[] = [
+  { key: 'name', label: 'Name' },
+  { key: 'size', label: 'Size' },
+  { key: 'lastModified', label: 'Last Modified' },
+];
 
 const ICONS: Record<FileType, React.ElementType> = {
   folder: Folder,
@@ -160,9 +211,14 @@ export function StorageBrowser({
   onRename,
   onCopyRequest,
   onMoveRequest,
+  onOpenInNewTab,
   checkedIds,
   onToggleChecked,
   onToggleCheckAll,
+  sortColumn,
+  sortDirection,
+  onSortClick,
+  canSort,
   pinnedPaths,
   onTogglePin,
   pageSize,
@@ -204,6 +260,123 @@ export function StorageBrowser({
     const invalid = validateObjectName(name);
     if (invalid) return toast.error(invalid);
     onRename?.(file, name);
+  };
+
+  const rowActions = (file: FileItem): RowAction[] => {
+    if (file.type === 'folder') {
+      const pinned = pinnedPaths?.has(file.id);
+      return [
+        {
+          key: 'open',
+          icon: ArrowRight,
+          label: 'Open',
+          onSelect: () => onNavigate?.(file.id),
+        },
+        {
+          key: 'open-new-tab',
+          icon: ExternalLink,
+          label: 'Open in new tab',
+          onSelect: () => onOpenInNewTab?.(file),
+        },
+        {
+          key: 'pin',
+          icon: pinned ? PinOff : Pin,
+          label: pinned ? 'Unpin folder' : 'Pin folder',
+          onSelect: () => onTogglePin?.(file),
+        },
+        {
+          key: 'copy-path',
+          icon: Share2Icon,
+          label: 'Copy path',
+          onSelect: () => copyPath(file.fullPath),
+        },
+        {
+          key: 'rename',
+          icon: PencilLine,
+          label: 'Rename',
+          onSelect: () => startRename(file),
+        },
+        {
+          key: 'copy-to',
+          icon: CopyIcon,
+          label: 'Copy to…',
+          onSelect: () => onCopyRequest?.(file),
+        },
+        {
+          key: 'move-to',
+          icon: FolderInput,
+          label: 'Move to…',
+          onSelect: () => onMoveRequest?.(file),
+        },
+        {
+          key: 'download-zip',
+          icon: Download,
+          label: 'Download (.zip)',
+          onSelect: () => onDownloadFolder?.(file.fullPath),
+          separatorBefore: true,
+        },
+        {
+          key: 'delete',
+          icon: TrashIcon,
+          label: 'Delete',
+          onSelect: () => setConfirmDeleteId(file.id),
+          destructive: true,
+        },
+      ];
+    }
+
+    return [
+      {
+        key: 'preview',
+        icon: Eye,
+        label: 'Preview',
+        onSelect: () => onView?.(file),
+      },
+      {
+        key: 'versions',
+        icon: History,
+        label: 'Versions',
+        onSelect: () => onViewVersions?.(file),
+      },
+      {
+        key: 'copy-path',
+        icon: Share2Icon,
+        label: 'Copy path',
+        onSelect: () => copyPath(file.fullPath),
+      },
+      {
+        key: 'download',
+        icon: Download,
+        label: 'Download',
+        onSelect: () => onDownload?.(file.id, file.name),
+      },
+      {
+        key: 'rename',
+        icon: PencilLine,
+        label: 'Rename',
+        onSelect: () => startRename(file),
+      },
+      {
+        key: 'copy-to',
+        icon: CopyIcon,
+        label: 'Copy to…',
+        onSelect: () => onCopyRequest?.(file),
+      },
+      {
+        key: 'move-to',
+        icon: FolderInput,
+        label: 'Move to…',
+        onSelect: () => onMoveRequest?.(file),
+      },
+      {
+        key: 'delete',
+        icon: TrashIcon,
+        label: 'Delete',
+        onSelect: () => setConfirmDeleteId(file.id),
+        destructive: true,
+        separatorBefore: true,
+      },
+    ];
   };
 
   // Every row already checked, so the header box toggles off rather than on.
@@ -342,147 +515,110 @@ export function StorageBrowser({
       }
 
       return (
-        <tr
-          key={file.id}
-          data-state={isSelected ? 'selected' : undefined}
-          className={cn(
-            'group border-b transition-colors last:border-0 hover:bg-accent/50',
-            isSelected && 'bg-accent'
-          )}
-        >
-          {/* Outside the clickable name cell so checking a row never also
-              opens the preview or navigates into the folder. */}
-          <td className="w-10 px-4 py-2.5 align-middle">
-            <Checkbox
-              checked={checkedIds.has(file.id)}
-              onCheckedChange={() => onToggleChecked(file)}
-              aria-label={`Select ${file.name}`}
+        // Radix's ContextMenu is what anchors a menu to the cursor; a
+        // DropdownMenu can only anchor to a rendered trigger, so right-click
+        // would have popped it open over the "..." button instead. Root renders
+        // no DOM and Content is portalled, so <tbody> still sees only <tr>.
+        <ContextMenu key={file.id}>
+          <ContextMenuTrigger asChild>
+            <tr
+              // Not data-state: Radix's ContextMenuTrigger owns that attribute
+              // on its trigger and overwrites it with open/closed.
+              data-selected={isSelected || undefined}
               className={cn(
-                'transition-opacity',
-                // Hidden until hover, like the row's own "..." trigger — but
-                // never once a selection exists, or unchecking turns into a
-                // hunt for a box that vanished when the pointer left.
-                !hasChecked &&
-                  'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=checked]:opacity-100'
+                'group border-b transition-colors last:border-0 hover:bg-accent/50',
+                isSelected && 'bg-accent'
               )}
-            />
-          </td>
-          <td
-            onClick={() =>
-              file.type === 'folder' ? onNavigate?.(file.id) : onView?.(file)
-            }
-            className="relative cursor-pointer px-4 py-2.5 align-middle"
-          >
-            {isSelected && (
-              <span className="absolute inset-y-0 left-0 w-0.5 bg-primary" />
-            )}
-            <div className="flex items-center gap-3">
-              {getFileIcon(file.type)}
-              <span
-                className="max-w-50 truncate text-sm text-strong md:max-w-md"
-                title={file.name}
-              >
-                {file.name}
-              </span>
-            </div>
-          </td>
-          <td className="px-4 py-2.5 align-middle font-mono text-xs text-muted-foreground">
-            {file.size}
-          </td>
-          <td className="px-4 py-2.5 align-middle font-mono text-xs text-muted-foreground">
-            {file.lastModified}
-          </td>
-          <td className="px-4 py-2.5 text-right align-middle">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  id={file.id}
-                  className="size-7 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
-                >
-                  <Ellipsis className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
-                <DropdownMenuGroup>
-                  {file.type === 'folder' ? (
-                    <>
-                      <DropdownMenuItem onClick={() => onNavigate?.(file.id)}>
-                        <ArrowRight /> Open
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onTogglePin?.(file)}>
-                        {pinnedPaths?.has(file.id) ? (
-                          <>
-                            <PinOff /> Unpin folder
-                          </>
-                        ) : (
-                          <>
-                            <Pin /> Pin folder
-                          </>
-                        )}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => copyPath(file.fullPath)}>
-                        <Share2Icon /> Copy path
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => startRename(file)}>
-                        <PencilLine /> Rename
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onCopyRequest?.(file)}>
-                        <CopyIcon /> Copy to…
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onMoveRequest?.(file)}>
-                        <FolderInput /> Move to…
-                      </DropdownMenuItem>
-                    </>
-                  ) : (
-                    <>
-                      <DropdownMenuItem onClick={() => onView?.(file)}>
-                        <Eye /> Preview
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onViewVersions?.(file)}>
-                        <History /> Versions
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => copyPath(file.fullPath)}>
-                        <Share2Icon /> Copy path
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => onDownload?.(file.id, file.name)}
-                      >
-                        <Download /> Download
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => startRename(file)}>
-                        <PencilLine /> Rename
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onCopyRequest?.(file)}>
-                        <CopyIcon /> Copy to…
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => onMoveRequest?.(file)}>
-                        <FolderInput /> Move to…
-                      </DropdownMenuItem>
-                    </>
+            >
+              {/* Outside the clickable name cell so checking a row never also
+              opens the preview or navigates into the folder. */}
+              <td className="w-10 px-4 py-2.5 align-middle">
+                <Checkbox
+                  checked={checkedIds.has(file.id)}
+                  onCheckedChange={() => onToggleChecked(file)}
+                  aria-label={`Select ${file.name}`}
+                  className={cn(
+                    'transition-opacity',
+                    // Hidden until hover, like the row's own "..." trigger — but
+                    // never once a selection exists, or unchecking turns into a
+                    // hunt for a box that vanished when the pointer left.
+                    !hasChecked &&
+                      'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=checked]:opacity-100'
                   )}
-                </DropdownMenuGroup>
-
-                <DropdownMenuSeparator />
-
-                {file.type === 'folder' && (
-                  <DropdownMenuItem
-                    onClick={() => onDownloadFolder?.(file.fullPath)}
-                  >
-                    <Download /> Download (.zip)
-                  </DropdownMenuItem>
+                />
+              </td>
+              <td
+                onClick={() =>
+                  file.type === 'folder'
+                    ? onNavigate?.(file.id)
+                    : onView?.(file)
+                }
+                className="relative cursor-pointer px-4 py-2.5 align-middle"
+              >
+                {isSelected && (
+                  <span className="absolute inset-y-0 left-0 w-0.5 bg-primary" />
                 )}
-                <DropdownMenuItem
-                  variant="destructive"
-                  onClick={() => setConfirmDeleteId(file.id)}
+                <div className="flex items-center gap-3">
+                  {getFileIcon(file.type)}
+                  <span
+                    className="max-w-50 truncate text-sm text-strong md:max-w-md"
+                    title={file.name}
+                  >
+                    {file.name}
+                  </span>
+                </div>
+              </td>
+              <td className="px-4 py-2.5 align-middle font-mono text-xs text-muted-foreground">
+                {file.size}
+              </td>
+              <td className="px-4 py-2.5 align-middle font-mono text-xs text-muted-foreground">
+                {file.lastModified}
+              </td>
+              <td className="px-4 py-2.5 text-right align-middle">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      id={file.id}
+                      className="size-7 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+                    >
+                      <Ellipsis className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-44">
+                    {rowActions(file).map((action) => (
+                      <React.Fragment key={action.key}>
+                        {action.separatorBefore && <DropdownMenuSeparator />}
+                        <DropdownMenuItem
+                          variant={
+                            action.destructive ? 'destructive' : 'default'
+                          }
+                          onClick={action.onSelect}
+                        >
+                          <action.icon /> {action.label}
+                        </DropdownMenuItem>
+                      </React.Fragment>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </td>
+            </tr>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="w-44">
+            {rowActions(file).map((action) => (
+              <React.Fragment key={action.key}>
+                {action.separatorBefore && <ContextMenuSeparator />}
+                <ContextMenuItem
+                  variant={action.destructive ? 'destructive' : 'default'}
+                  onClick={action.onSelect}
                 >
-                  <TrashIcon /> Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </td>
-        </tr>
+                  <action.icon /> {action.label}
+                </ContextMenuItem>
+              </React.Fragment>
+            ))}
+          </ContextMenuContent>
+        </ContextMenu>
       );
     });
   };
@@ -518,14 +654,44 @@ export function StorageBrowser({
                     }
                   />
                 </th>
-                {['Name', 'Size', 'Last Modified'].map((label) => (
-                  <th
-                    key={label}
-                    className="h-9 px-4 align-middle text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground"
-                  >
-                    {label}
-                  </th>
-                ))}
+                {SORT_COLUMNS.map(({ key, label }) => {
+                  const active = sortColumn === key;
+                  return (
+                    <th
+                      key={key}
+                      aria-sort={
+                        active
+                          ? sortDirection === 'asc'
+                            ? 'ascending'
+                            : 'descending'
+                          : 'none'
+                      }
+                      className={cn(
+                        'h-9 select-none px-4 align-middle text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground',
+                        canSort
+                          ? 'cursor-pointer hover:text-foreground'
+                          : 'cursor-default opacity-50',
+                        active && 'text-strong'
+                      )}
+                      onClick={() => canSort && onSortClick(key)}
+                      title={
+                        canSort
+                          ? undefined
+                          : 'Only this page is loaded. Use "Scan all" to sort the whole folder.'
+                      }
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        {label}
+                        {active &&
+                          (sortDirection === 'asc' ? (
+                            <ArrowUp className="size-3" />
+                          ) : (
+                            <ArrowDown className="size-3" />
+                          ))}
+                      </span>
+                    </th>
+                  );
+                })}
                 <th className="h-9 px-4 text-right align-middle text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
                   Actions
                 </th>
@@ -562,9 +728,12 @@ export function StorageBrowser({
             {files.length} shown
           </span>
           {folderCount ? (
-            <span className="font-mono text-xs text-muted-foreground">
-              · {folderCount.count}
-              {folderCount.capped && '+'} total
+            <span
+              className="font-mono text-xs text-muted-foreground"
+              title="Direct children only — subfolders count as one entry and their contents are not included"
+            >
+              · {folderCount.count} total ·{' '}
+              {formatStorage(folderCount.totalBytes)}
             </span>
           ) : (
             <Button
@@ -573,7 +742,7 @@ export function StorageBrowser({
               onClick={onCount}
               loading={isCounting}
               disabled={isCounting}
-              title="Walks the whole folder to count objects"
+              title="Walks the whole folder to count objects and add up their size"
             >
               {!isCounting && <Sigma className="size-3" />}
               Count
