@@ -1,3 +1,20 @@
+## [1.4.2] - 2026-08-14
+
+### 🚀 Features
+
+- *(connections)* Reorder by drag, pin up to 3, scrollable list
+- *(browser)* Sortable columns and a folder size total
+- *(browser)* Right-click row menu, open folder in a new tab
+- *(preview)* Size gate, bounded text height, rename/copy/move
+
+### 🐛 Bug Fixes
+
+- *(layout)* Pin the navbar and stop the page growing past the viewport
+
+### 📚 Documentation
+
+- *(objects)* Shorten the move version-history warning
+- :bookmark: change package.json version to 1.4.2
 ## [1.4.0] - 2026-08-13
 
 ### 🚀 Features
@@ -9,6 +26,7 @@
 - *(objects)* Copy and move with a destination picker
 - *(versions)* Preview an old version of an image inline
 - *(browser)* Multi-select rows for bulk delete and zip download
+- :memo: Add changelog entry for 1.4.0
 
 ### 🐛 Bug Fixes
 
