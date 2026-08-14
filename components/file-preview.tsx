@@ -15,21 +15,33 @@
 'use client';
 
 import {
+  Check,
+  Copy as CopyIcon,
   Download,
   ExternalLink,
   FileQuestion,
+  FolderInput,
   History,
   Loader2,
+  PencilLine,
   Share2Icon,
   X,
 } from 'lucide-react';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { CodePreview } from '@/components/code-preview';
 import { FileItem, getFileIcon } from '@/components/app-browser';
 import type { ObjectMetadata } from '@/app/actions/object-management';
-import { copyToClipboard } from '@/lib/utils';
+import { Input } from '@/components/ui/input';
+import {
+  cn,
+  copyToClipboard,
+  formatStorage,
+  REVEAL_ANIMATION,
+  validateObjectName,
+} from '@/lib/utils';
+import { Separator } from '@/components/ui/separator';
 
 interface FilePreviewProps {
   file: FileItem | null;
@@ -41,15 +53,28 @@ interface FilePreviewProps {
   metadata: ObjectMetadata | null;
   isMetadataLoading: boolean;
   onViewVersions: (file: FileItem) => void;
+  /** Same handler the table row uses; `newName` is one segment, not a path. */
+  onRename: (file: FileItem, newName: string) => void;
+  onMoveRequest: (file: FileItem) => void;
+  onCopyRequest: (file: FileItem) => void;
   /** Desktop width in px. Owned by the page so it outlives this component. */
   width: number;
   onWidthChange: (width: number) => void;
 }
 
-const PREVIEW_MIN_WIDTH = 320;
+const PREVIEW_MIN_WIDTH = 360;
 const PREVIEW_MAX_WIDTH = 900;
 /** Never let the drag squeeze the file table below this. */
 const LIST_MIN_WIDTH = 360;
+
+/**
+ * Past this, a text preview is gated behind a confirm.
+ *
+ * Rendering it means downloading the whole object into the tab and handing it
+ * to a syntax highlighter, which is slow enough to look like a hang. Text only
+ * — an image or a video of the same size streams and needs no gate.
+ */
+const LARGE_PREVIEW_BYTES = 10 * 1024 * 1024;
 
 const clampWidth = (px: number) => {
   const room =
@@ -72,7 +97,21 @@ function MetaField({ label, value }: { label: string; value: string }) {
   );
 }
 
-function PreviewBody({ file, url }: { file: FileItem; url: string }) {
+function PreviewBody({
+  file,
+  url,
+  metadata,
+  isMetadataLoading,
+  forced,
+  onForce,
+}: {
+  file: FileItem;
+  url: string;
+  metadata: ObjectMetadata | null;
+  isMetadataLoading: boolean;
+  forced: boolean;
+  onForce: () => void;
+}) {
   switch (file.type) {
     case 'image':
       return (
@@ -110,8 +149,31 @@ function PreviewBody({ file, url }: { file: FileItem; url: string }) {
         />
       );
     case 'json':
-    case 'text':
+    case 'text': {
+      // While the size is still unknown this falls through to CodePreview's
+      // own loading state. The gate only ever fires on a confirmed byte count,
+      // so content is never shown and then retroactively hidden.
+      const size = metadata?.contentLength;
+      if (
+        !isMetadataLoading &&
+        size != null &&
+        size > LARGE_PREVIEW_BYTES &&
+        !forced
+      ) {
+        return (
+          <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+            <p className="text-sm text-muted-foreground">
+              This file is {formatStorage(size)}. Rendering it inline can hang
+              the tab for a while.
+            </p>
+            <Button variant="outline" size="sm" onClick={onForce}>
+              Show preview anyway
+            </Button>
+          </div>
+        );
+      }
       return <CodePreview presignedUrl={url} fileName={file.name} />;
+    }
     default:
       return (
         <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
@@ -141,12 +203,31 @@ export function FilePreview({
   metadata,
   isMetadataLoading,
   onViewVersions,
+  onRename,
+  onMoveRequest,
+  onCopyRequest,
   width,
   onWidthChange,
 }: FilePreviewProps) {
   const drag = useRef<{ startX: number; startWidth: number } | null>(null);
+  // page.tsx keys this component by file id, so both reset on a new file — a
+  // "show it anyway" answered for one object must not carry to the next.
+  const [forced, setForced] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(file?.name ?? '');
 
   if (!file) return null;
+
+  const submitRename = () => {
+    const name = renameValue.trim();
+    setIsRenaming(false);
+    if (!name || name === file.name) return;
+    // Same rule the row rename enforces, and the same reason: without it a
+    // rename containing "/" becomes a move to anywhere in the bucket.
+    const invalid = validateObjectName(name);
+    if (invalid) return toast.error(invalid);
+    onRename(file, name);
+  };
 
   const copyPath = async () => {
     const ok = await copyToClipboard(file.fullPath);
@@ -191,7 +272,7 @@ export function FilePreview({
       // the window later must not let the panel eat the table. md:relative, not
       // md:static, because the absolute resize handle needs this element as its
       // containing block or it anchors to an ancestor and lands on the sidebar.
-      className="fixed inset-0 z-30 flex w-full flex-col border-l bg-card md:relative md:z-auto md:w-(--preview-w) md:max-w-[calc(100vw-360px)] md:shrink-0"
+      className="fixed inset-0 z-30 flex w-full flex-col border-l bg-card md:relative md:z-auto md:h-full md:w-(--preview-w) md:max-w-[calc(100vw-360px)] md:shrink-0"
     >
       <div
         role="separator"
@@ -249,24 +330,114 @@ export function FilePreview({
         </Button>
       </header>
 
-      <div className="flex items-center gap-2 border-b px-4 py-2">
+      {/* Icon-only, and nowrap: six labelled buttons cannot fit the 360px
+          minimum without wrapping to a second row or scrolling sideways. */}
+      <div className="flex flex-nowrap items-center gap-3 overflow-hidden border-b px-4 py-2">
         <Button
           variant="ghost"
-          size="sm"
+          size="icon"
+          className="size-8"
+          title="Download"
           onClick={() => onDownload(file.id, file.name)}
         >
           <Download className="size-3.5" />
-          Download
+          <span className="sr-only">Download</span>
         </Button>
-        <Button variant="ghost" size="sm" onClick={copyPath}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          title="Copy path"
+          onClick={copyPath}
+        >
           <Share2Icon className="size-3.5" />
-          Copy path
+          <span className="sr-only">Copy path</span>
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => onViewVersions(file)}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          title="Rename"
+          onClick={() => {
+            setRenameValue(file.name);
+            setIsRenaming(true);
+          }}
+        >
+          <PencilLine className="size-3.5" />
+          <span className="sr-only">Rename</span>
+        </Button>
+        <Separator orientation="vertical" />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          title="Copy to…"
+          onClick={() => onCopyRequest(file)}
+        >
+          <CopyIcon className="size-3.5" />
+          <span className="sr-only">Copy to</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          title="Move to…"
+          onClick={() => onMoveRequest(file)}
+        >
+          <FolderInput className="size-3.5" />
+          <span className="sr-only">Move to</span>
+        </Button>
+        <Separator orientation="vertical" />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          title="Versions"
+          onClick={() => onViewVersions(file)}
+        >
           <History className="size-3.5" />
-          Versions
+          <span className="sr-only">Versions</span>
         </Button>
       </div>
+
+      {isRenaming && (
+        <div
+          className={cn(
+            'flex items-center gap-1 border-b px-4 py-2',
+            REVEAL_ANIMATION
+          )}
+        >
+          <Input
+            autoFocus
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submitRename();
+              if (e.key === 'Escape') setIsRenaming(false);
+            }}
+            className="h-8 min-w-0 flex-1 font-mono text-sm"
+            aria-label={`Rename ${file.name}`}
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            title="Save"
+            onClick={submitRename}
+          >
+            <Check className="size-3.5 text-pulse-green" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            title="Cancel"
+            onClick={() => setIsRenaming(false)}
+          >
+            <X className="size-3.5" />
+          </Button>
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-auto p-4">
         {isLoading ? (
@@ -274,7 +445,14 @@ export function FilePreview({
             <Loader2 className="size-6 animate-spin text-muted-foreground" />
           </div>
         ) : url ? (
-          <PreviewBody file={file} url={url} />
+          <PreviewBody
+            file={file}
+            url={url}
+            metadata={metadata}
+            isMetadataLoading={isMetadataLoading}
+            forced={forced}
+            onForce={() => setForced(true)}
+          />
         ) : (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
             Failed to load preview

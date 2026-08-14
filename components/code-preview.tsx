@@ -113,7 +113,11 @@ export function CodePreview({ presignedUrl, fileName = '' }: CodePreviewProps) {
           Copy
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto rounded-md border bg-muted/40 text-[13px]">
+      {/* max-h is belt-and-braces over the flex chain above: min-h-0/flex-1
+          only contains the height while every ancestor cooperates, and one
+          child that does not (whatever ShikiHighlighter renders inside) grows
+          the panel instead of scrolling. The cap holds either way. */}
+      <div className="max-h-[60vh] min-h-0 flex-1 overflow-auto rounded-md border bg-muted/40 text-[13px]">
         <ShikiHighlighter
           language={language}
           theme={resolvedTheme === 'light' ? 'github-light' : 'vesper'}
