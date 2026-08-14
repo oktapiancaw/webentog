@@ -258,6 +258,61 @@ export function replaceLastSegment(key: string, name: string): string {
 export const REVEAL_ANIMATION =
   'animate-in fade-in-0 slide-in-from-top-1 duration-200';
 
+export type SortColumn = 'name' | 'size' | 'lastModified';
+export type SortDirection = 'asc' | 'desc';
+
+/** The fields a row is ordered by. Structural, so both row shapes satisfy it. */
+export interface SortableFile {
+  type: string;
+  name: string;
+  /** Raw bytes. Null for folders and for objects with no reported length. */
+  sizeBytes: number | null;
+  lastModified: string | null;
+}
+
+/**
+ * Folders before files, whatever else is being compared.
+ *
+ * Not `type.localeCompare(type)`: the type names are sorted alphabetically by
+ * that, and 'audio' sorts before 'folder' — so a folder of mp3s listed the
+ * audio files above the directories. Only folder-vs-not matters here.
+ */
+const foldersFirst = (a: SortableFile, b: SortableFile) =>
+  Number(a.type !== 'folder') - Number(b.type !== 'folder');
+
+/** Missing timestamps count as the epoch so they land at one end, not mid-list. */
+function toTime(value: string | null): number {
+  if (!value) return 0;
+  const ms = new Date(value).getTime();
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
+const BY_COLUMN: Record<
+  SortColumn,
+  (a: SortableFile, b: SortableFile) => number
+> = {
+  name: (a, b) => a.name.localeCompare(b.name),
+  // Folders and unknown sizes have no byte count; -1 keeps them together at
+  // the light end instead of scattering through the list as NaN comparisons.
+  size: (a, b) => (a.sizeBytes ?? -1) - (b.sizeBytes ?? -1),
+  lastModified: (a, b) => toTime(a.lastModified) - toTime(b.lastModified),
+};
+
+/**
+ * Comparator for a user-chosen column.
+ *
+ * Folders-first stays the primary key regardless of the column, matching the
+ * server's default order — the chosen column decides the order *within* the
+ * folders and *within* the files, so a size sort cannot interleave the two.
+ */
+export function compareFiles(
+  column: SortColumn,
+  direction: SortDirection
+): (a: SortableFile, b: SortableFile) => number {
+  const dir = direction === 'asc' ? 1 : -1;
+  return (a, b) => foldersFirst(a, b) || dir * BY_COLUMN[column](a, b);
+}
+
 /** Last segment of a key, ignoring any trailing slash. `a/b/c/` -> `c` */
 export function basename(key: string): string {
   const stripped = key.endsWith('/') ? key.slice(0, -1) : key;
@@ -290,6 +345,15 @@ export function folderPrefix(folder: string): string {
 export function joinFolder(folder: string, name: string): string {
   return `${folderPrefix(folder)}${name}`;
 }
+
+/**
+ * How many connections one user may keep pinned above the scrolling list.
+ *
+ * Here rather than beside the action that enforces it: `connection-prefs.ts`
+ * is a `'use server'` module, and Next strips any export from one of those
+ * that is not an async function.
+ */
+export const MAX_PINNED_CONNECTIONS = 3;
 
 /** Rows-per-page choices, and the allowlist for `?size=`. */
 export const PAGE_SIZES = [10, 20, 50, 100];

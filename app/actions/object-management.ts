@@ -16,6 +16,7 @@
 
 import type { Operator } from 'opendal';
 import { getOperator } from '@/lib/opendal';
+import { sql } from 'kysely';
 import { getDb, insertAndGetId } from '@/lib/db';
 import type { UserRole } from '@/lib/db/types';
 import { getCurrentUser } from './auth';
@@ -58,6 +59,8 @@ export interface ConnectionConfig {
   owner_id?: number | null;
   /** Joined for the admin view so connections can be labelled by owner. */
   owner_username?: string | null;
+  /** Per-viewer, from connection_prefs. Never a property of the shared row. */
+  pinned?: boolean;
 }
 
 /**
@@ -212,6 +215,14 @@ export async function getConnections(): Promise<ConnectionConfig[]> {
     let query = db
       .selectFrom('connections')
       .leftJoin('users', 'users.id', 'connections.owner_id')
+      // Left join, and scoped to this viewer inside the ON clause rather than
+      // in WHERE: a WHERE on a left-joined column would drop every connection
+      // the user has never arranged, which is all of them on a fresh account.
+      .leftJoin('connection_prefs', (join) =>
+        join
+          .onRef('connection_prefs.connection_id', '=', 'connections.id')
+          .on('connection_prefs.user_id', '=', actor.userId)
+      )
       .select([
         'connections.id as id',
         'connections.name as name',
@@ -222,7 +233,21 @@ export async function getConnections(): Promise<ConnectionConfig[]> {
         'connections.region as region',
         'connections.owner_id as owner_id',
         'users.username as owner_username',
+        'connection_prefs.pinned as pinned',
+        'connection_prefs.sort_order as sort_order',
       ])
+      // Pinned first, then the viewer's own order, then the original default
+      // so rows nobody has touched keep the order they have always had.
+      //
+      // The left join yields NULL for both columns on a connection this user
+      // has never arranged, and the engines disagree on where NULLs land:
+      // Postgres defaults to NULLS FIRST for DESC, so a plain
+      // `ORDER BY pinned DESC` floated every untouched connection above the
+      // pinned ones — while SQLite and MySQL sorted them last and looked
+      // correct. Folding the NULL into a concrete value orders the same way
+      // on all three.
+      .orderBy(sql`CASE WHEN connection_prefs.pinned THEN 0 ELSE 1 END`)
+      .orderBy(sql`COALESCE(connection_prefs.sort_order, 2147483647)`)
       .orderBy('connections.created_at', 'desc');
 
     if (actor.role !== 'admin') {
@@ -244,7 +269,22 @@ export async function getConnections(): Promise<ConnectionConfig[]> {
       );
     }
 
-    return await query.execute();
+    const rows = await query.execute();
+    // sort_order did its job in the ORDER BY and is not part of the client
+    // shape. `pinned` is null for an untouched row and 0/1 on SQLite, so it is
+    // normalised once here rather than at every call site.
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      endpoint: row.endpoint,
+      accessKey: row.accessKey,
+      secretKey: row.secretKey,
+      bucket: row.bucket,
+      region: row.region,
+      owner_id: row.owner_id,
+      owner_username: row.owner_username,
+      pinned: Boolean(row.pinned),
+    }));
   } catch (error) {
     // Read paths degrade quietly here, as they do elsewhere in this file. An
     // empty sidebar is the safe direction to fail: it shows too little rather
@@ -284,6 +324,8 @@ export interface FormattedFile {
   fullPath: string;
   type: FileType;
   size: string;
+  /** Raw bytes behind `size`, kept so the client can order by magnitude. */
+  sizeBytes: number | null;
   lastModified: string | null;
 }
 
@@ -308,9 +350,16 @@ export interface ListStorageFilesResult {
   foldersTruncated: boolean;
 }
 
-/** Display order: folders first, then by name. */
+/**
+ * Display order: folders first, then by name.
+ *
+ * The folder test is explicit rather than a `type.localeCompare(type)`, which
+ * orders the type names alphabetically and so put 'audio' ahead of 'folder' —
+ * a directory of mp3s listed its files above its subfolders.
+ */
 const byTypeThenName = (a: FormattedFile, b: FormattedFile) =>
-  a.type.localeCompare(b.type) || a.name.localeCompare(b.name);
+  Number(a.type !== 'folder') - Number(b.type !== 'folder') ||
+  a.name.localeCompare(b.name);
 
 /**
  * Lists a directory: buffers small folders, cursor-pages large ones.
@@ -364,9 +413,10 @@ export async function listStorageFiles(
       const fileType: FileType = metadata.isDirectory()
         ? 'folder'
         : fileTypeFromName(pathString);
-      const sizeFile = metadata.contentLength
-        ? formatStorage(Number(metadata.contentLength))
-        : '--';
+      const sizeBytes = metadata.contentLength
+        ? Number(metadata.contentLength)
+        : null;
+      const sizeFile = sizeBytes !== null ? formatStorage(sizeBytes) : '--';
       const name = pathString.split('/').filter(Boolean).pop() || 'unknown';
 
       collected.push({
@@ -375,6 +425,7 @@ export async function listStorageFiles(
         fullPath: `${config.endpoint}/${config.bucket}/${pathString}`,
         type: fileType,
         size: sizeFile,
+        sizeBytes,
         lastModified: metadata.lastModified,
       });
     }
@@ -419,31 +470,47 @@ export async function listStorageFiles(
   }
 }
 
+export interface FolderTally {
+  /** Direct children, folders included. */
+  count: number;
+  /** Bytes across the direct child files. Subfolder contents are not counted. */
+  totalBytes: number;
+}
+
 /**
- * Counts direct children, keeping only the tally. The one full traversal in the
- * app, so it runs on explicit user request.
+ * Counts and measures the direct children of a folder.
  *
- * `capped` means the walk hit `maxScan` and the UI shows "5000+" rather than a
- * count it never finished.
+ * Not recursive: a subfolder counts as one entry and contributes nothing to
+ * the byte total, so the number always describes the listing on screen rather
+ * than the whole tree beneath it.
+ *
+ * The walk runs to the end of the folder — no scan cap, so the number shown is
+ * the real one. That makes this the most expensive read in the app on a large
+ * directory, which is why it stays behind an explicit button instead of
+ * running with the listing.
  */
 export async function countFolderObjects(
   config: ConnectionConfig,
-  path: string,
-  maxScan = 5000
-): Promise<{ count: number; capped: boolean }> {
+  path: string
+): Promise<FolderTally> {
   try {
     const op = getOperator(config);
 
     const lister = await op.lister(path, { recursive: false });
 
     let count = 0;
+    let totalBytes = 0;
     let entry;
-    while (count < maxScan && (entry = await lister.next()) !== null) {
+    while ((entry = await lister.next()) !== null) {
       if (entry.path() === path) continue; // self-entry isn't a child
       count++;
+      const meta = entry.metadata();
+      // Directory markers report a length of 0, so this needs no guard beyond
+      // the null check — but folders are still counted as entries above.
+      if (meta.contentLength !== null) totalBytes += Number(meta.contentLength);
     }
 
-    return { count, capped: count >= maxScan };
+    return { count, totalBytes };
   } catch (error) {
     console.error('Count Objects Error:', error);
     throw storageError(error, 'Could not count this folder.');
