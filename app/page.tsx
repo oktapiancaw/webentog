@@ -58,6 +58,7 @@ import {
   type CopyMoveTarget,
 } from '@/components/copy-move-dialog';
 import { SelectionToolbar } from '@/components/selection-toolbar';
+import { PageLoader } from '@/components/page-loader';
 import type { ValidatedPinnedFolder } from './actions/pinned-folders';
 import {
   addPin,
@@ -1094,7 +1095,7 @@ function PageContent() {
 
 export default function Page() {
   return (
-    <Suspense fallback={<div>Loading...</div>}>
+    <Suspense fallback={<PageLoader />}>
       <PageContent />
     </Suspense>
   );
