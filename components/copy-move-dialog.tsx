@@ -261,11 +261,8 @@ export function CopyMoveDialog({
           >
             <TriangleAlert className="mt-px size-4 shrink-0" />
             <p className="min-w-0 text-xs">
-              Version history does not travel. Object storage has no move, so
-              this is a copy of the <em>current</em> version followed by a
-              delete: it arrives at the destination with a single version, and
-              earlier ones stay behind at the old path, where this app can no
-              longer reach them.
+              Only the <em>current</em> version will be moved. Previous versions
+              will remain at the old location and become inaccessible.
             </p>
           </div>
         )}
