@@ -26,6 +26,7 @@ import { StorageBrowser, FileItem } from '@/components/app-browser';
 import { AppSidebar } from '@/components/app-sidebar';
 import type {
   ConnectionConfig,
+  FolderTally,
   FormattedFile,
   ListMode,
   ObjectMetadata,
@@ -67,11 +68,14 @@ import {
 } from '@/lib/storage-mode';
 import {
   cn,
+  compareFiles,
   explainError,
   getLastNameFromPath,
   parsePagingParams,
   REVEAL_ANIMATION,
   walkCursorStack,
+  type SortColumn,
+  type SortDirection,
 } from '@/lib/utils';
 
 /** Server rows carry nullable metadata; the table wants display strings. */
@@ -82,6 +86,7 @@ const toFileItem = (item: FormattedFile): FileItem => ({
   type: item.type as FileItem['type'],
   size:
     item.size !== null && item.size !== undefined ? String(item.size) : '--',
+  sizeBytes: item.sizeBytes,
   lastModified: item.lastModified ? String(item.lastModified) : '--',
 });
 
@@ -118,10 +123,7 @@ function PageContent() {
   // prefixes can sort after every file key, so a bounded scan may miss them.
   const [forceFullScan, setForceFullScan] = useState(false);
   // Opt-in folder total, cleared when the folder changes.
-  const [folderCount, setFolderCount] = useState<{
-    count: number;
-    capped: boolean;
-  } | null>(null);
+  const [folderCount, setFolderCount] = useState<FolderTally | null>(null);
   const [isCounting, setIsCounting] = useState(false);
 
   const [viewingFile, setViewingFile] = useState<FileItem | null>(null);
@@ -153,6 +155,11 @@ function PageContent() {
     new Map()
   );
   const [isBulkBusy, setIsBulkBusy] = useState(false);
+
+  // null means the server's default order. Third click on a column returns
+  // here rather than cycling asc/desc forever.
+  const [sortColumn, setSortColumn] = useState<SortColumn | null>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const checkedIds = useMemo(
     () => new Set(checkedItems.keys()),
     [checkedItems]
@@ -167,7 +174,7 @@ function PageContent() {
     });
   // Lives here because FilePreview unmounts on close, which would reset the
   // chosen width on every new file.
-  const [previewWidth, setPreviewWidth] = useState(460);
+  const [previewWidth, setPreviewWidth] = useState(360);
 
   // Saved folder bookmarks. Named `bookmarked*` because `pinnedFolders` above
   // means something else: subfolders found during a cursor-mode walk.
@@ -275,9 +282,14 @@ function PageContent() {
         } = await listPage(config, cursor);
         modeRef.current = newMode;
         setMode(newMode);
-        // Buffered walked the whole folder, so the total costs nothing.
+        // Buffered walked the whole folder, so both totals cost nothing —
+        // every row and its byte count are already in hand. "Scan all" lands
+        // here too, which is what makes the size show up after using it.
         if (newMode === 'buffered') {
-          setFolderCount({ count: items.length, capped: false });
+          setFolderCount({
+            count: items.length,
+            totalBytes: items.reduce((sum, i) => sum + (i.sizeBytes ?? 0), 0),
+          });
         }
         // Only page 1 does the discovery walk, so only page 1 reports folders.
         if (cursor === null) {
@@ -441,6 +453,41 @@ function PageContent() {
 
   const isBuffered = mode === 'buffered';
 
+  /**
+   * Sorting needs the whole folder in memory.
+   *
+   * S3 list APIs return lexicographic key order and nothing else — OpenDAL's
+   * ListOptions has no order field, and the paging cursor is derived from that
+   * raw order. So any ordering other than the server's default is a client-side
+   * sort, and in cursor mode `files` is one page: "sort by size" would quietly
+   * reorder 20 rows while looking like it reordered the directory.
+   *
+   * The headers are disabled until "Scan all" buffers the folder, rather than
+   * triggering that scan from a header click — expensive work stays an explicit
+   * button here, same as Count.
+   */
+  const canSort = isBuffered;
+
+  const sortedFiles = useMemo(() => {
+    if (!sortColumn) return filteredFiles; // server's folders-first default
+    return [...filteredFiles].sort(compareFiles(sortColumn, sortDirection));
+  }, [filteredFiles, sortColumn, sortDirection]);
+
+  const handleSortClick = (column: SortColumn) => {
+    // The header is disabled in cursor mode; this catches a click that lands
+    // during a mode transition.
+    if (!canSort) return;
+    if (sortColumn !== column) {
+      setSortColumn(column);
+      setSortDirection('asc');
+    } else if (sortDirection === 'asc') {
+      setSortDirection('desc');
+    } else {
+      setSortColumn(null); // third click: back to the default order
+      setSortDirection('asc');
+    }
+  };
+
   // Slice unless cursor mode is certain. During a mode reset `files` still holds
   // the previous buffered folder, and returning it whole would paint every row
   // for a frame before the refetch lands.
@@ -450,14 +497,14 @@ function PageContent() {
       // prepending them to page 2+ would repeat rows the user already saw and
       // push the genuine page-2 items down. Page 2+ shows exactly the server's
       // page. Drop any folder the page already holds so it is not listed twice.
-      if (pageIndex > 0) return filteredFiles;
+      if (pageIndex > 0) return sortedFiles;
       const shown = pinnedFolders.filter(matchesSearch);
       const pinnedIds = new Set(shown.map((f) => f.id));
-      return [...shown, ...filteredFiles.filter((f) => !pinnedIds.has(f.id))];
+      return [...shown, ...sortedFiles.filter((f) => !pinnedIds.has(f.id))];
     }
     const start = pageIndex * pageSize;
-    return filteredFiles.slice(start, start + pageSize);
-  }, [mode, filteredFiles, pinnedFolders, matchesSearch, pageIndex, pageSize]);
+    return sortedFiles.slice(start, start + pageSize);
+  }, [mode, sortedFiles, pinnedFolders, matchesSearch, pageIndex, pageSize]);
 
   const hasNextPage =
     mode === 'cursor'
@@ -465,11 +512,11 @@ function PageContent() {
       : (pageIndex + 1) * pageSize < filteredFiles.length;
 
   // Null means "unknown": cursor mode only learns the total if the user asks
-  // for a count, and a capped count is a floor, not a total. The pager renders
-  // a growing strip in that case rather than inventing a last page.
+  // for a count. The pager renders a growing strip in that case rather than
+  // inventing a last page.
   const totalPages =
     mode === 'cursor'
-      ? folderCount && !folderCount.capped
+      ? folderCount
         ? Math.max(1, Math.ceil(folderCount.count / pageSize))
         : null
       : Math.max(1, Math.ceil(filteredFiles.length / pageSize));
@@ -618,6 +665,7 @@ function PageContent() {
     closePreview();
     resetPaging(); // cursors are bucket-scoped, never carry them across
     clearChecked(); // keys from the old bucket mean nothing in this one
+    setSortColumn(null);
     setBookmarkedFolders([]); // don't show the old connection's pins mid-fetch
     fetchBookmarks(newConfig);
     const params = new URLSearchParams(searchParams);
@@ -641,6 +689,7 @@ function PageContent() {
     closePreview();
     resetPaging();
     clearChecked();
+    setSortColumn(null);
     setFiles([]);
     setBookmarkedFolders([]);
     setError(null);
@@ -805,6 +854,20 @@ function PageContent() {
     }
   };
 
+  /**
+   * Opens this browser in a second tab, already inside the folder.
+   *
+   * Same URL handleNavigate would push, so the new tab restores the connection
+   * from `?conn=` exactly as a reload does. `page` is dropped because a folder
+   * always opens on its first page.
+   */
+  const handleOpenInNewTab = (folder: FileItem) => {
+    const params = new URLSearchParams(searchParams);
+    params.set('path', folder.id.replace(/^\//, ''));
+    params.delete('page');
+    window.open(`${pathname}?${params.toString()}`, '_blank', 'noopener');
+  };
+
   const handleView = async (file: FileItem) => {
     if (!config) return;
     if (viewingFile?.id === file.id) return closePreview(); // click again to close
@@ -831,7 +894,13 @@ function PageContent() {
   };
 
   return (
-    <SidebarProvider style={SHELL_STYLE}>
+    // h-svh, not the primitive's own min-h-svh: a minimum is a floor, so any
+    // descendant taller than the viewport grows the whole document instead of
+    // scrolling inside itself — and once the page is the thing that scrolls,
+    // the header and the preview panel go with it. A real ceiling plus
+    // overflow-hidden leaves overgrowing content nowhere to go but the nearest
+    // overflow-auto ancestor, which is `main` and the preview's own body.
+    <SidebarProvider style={SHELL_STYLE} className="h-svh overflow-hidden">
       <AppSidebar
         variant="inset"
         onConnect={handleConnect}
@@ -937,9 +1006,14 @@ function PageContent() {
                   onMoveRequest={(file) =>
                     setCopyMoveTarget({ file, mode: 'move' })
                   }
+                  onOpenInNewTab={handleOpenInNewTab}
                   checkedIds={checkedIds}
                   onToggleChecked={toggleChecked}
                   onToggleCheckAll={toggleCheckAllVisible}
+                  sortColumn={sortColumn}
+                  sortDirection={sortDirection}
+                  onSortClick={handleSortClick}
+                  canSort={canSort}
                   pinnedPaths={pinnedPaths}
                   onTogglePin={handleTogglePin}
                   pageSize={pageSize}
@@ -966,6 +1040,9 @@ function PageContent() {
           </main>
 
           <FilePreview
+            // Remount per file so the >10MB "show anyway" answer and any
+            // half-typed rename do not carry over to the next object.
+            key={viewingFile?.id ?? 'none'}
             file={viewingFile}
             url={viewingUrl}
             isLoading={isViewingLoading}
@@ -974,6 +1051,9 @@ function PageContent() {
             metadata={viewingMetadata}
             isMetadataLoading={isMetadataLoading}
             onViewVersions={handleViewVersions}
+            onRename={handleRename}
+            onMoveRequest={(file) => setCopyMoveTarget({ file, mode: 'move' })}
+            onCopyRequest={(file) => setCopyMoveTarget({ file, mode: 'copy' })}
             width={previewWidth}
             onWidthChange={setPreviewWidth}
           />

@@ -43,7 +43,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   return (
-    <SidebarProvider style={SHELL_STYLE}>
+    // Same ceiling as the browser page: the primitive's min-h-svh is a floor,
+    // so a long admin table would grow the document and take the header with
+    // it. Kept in step with app/page.tsx deliberately.
+    <SidebarProvider style={SHELL_STYLE} className="h-svh overflow-hidden">
       <AppSidebar
         variant="inset"
         onConnect={(config) =>
@@ -64,7 +67,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             )
           }
         />
-        <main className="@container/main min-w-0 flex-1 overflow-auto">
+        <main className="@container/main min-h-0 min-w-0 flex-1 overflow-auto">
           {children}
         </main>
       </SidebarInset>
