@@ -40,3 +40,14 @@ export function isUniqueViolation(error: unknown, type: DbType): boolean {
       return code === 'ER_DUP_ENTRY' || errno === 1062;
   }
 }
+
+/**
+ * The value to bind for a boolean column on this engine.
+ *
+ * better-sqlite3 refuses a JS boolean outright ("SQLite3 can only bind
+ * numbers, strings, bigints, buffers, and null"), while Postgres refuses the
+ * integer that would satisfy it. mysql2 takes either.
+ */
+export function pinnedValue(type: DbType, value: boolean): boolean | number {
+  return type === 'sqlite' ? (value ? 1 : 0) : value;
+}

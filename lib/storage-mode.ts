@@ -31,6 +31,11 @@ import {
   type PinnedFolder,
   type ValidatedPinnedFolder,
 } from '@/app/actions/pinned-folders';
+import {
+  reorderConnections as reorderConnectionsAction,
+  toggleConnectionPin as toggleConnectionPinAction,
+} from '@/app/actions/connection-prefs';
+import { MAX_PINNED_CONNECTIONS } from '@/lib/utils';
 
 /**
  * Storage backend selector for connections and pins.
@@ -73,7 +78,68 @@ const nextId = (rows: { id?: number }[]) =>
 
 export async function loadConnections(): Promise<ConnectionConfig[]> {
   if (await isPersistentStorage()) return getConnections();
-  return read<ConnectionConfig>(CONNECTIONS_KEY);
+  // The server sorts pinned-first in SQL; here the stored array order *is* the
+  // order, so only the pinned group has to be lifted out in front of it.
+  const rows = read<ConnectionConfig>(CONNECTIONS_KEY);
+  return [...rows.filter((r) => r.pinned), ...rows.filter((r) => !r.pinned)];
+}
+
+/**
+ * Records a new order for one group of connections.
+ *
+ * `orderedIds` covers one group only (pinned or unpinned), so the untouched
+ * group keeps its positions. In sessionStorage mode the array is the order, so
+ * the listed ids are written back in place — the slots they already occupy.
+ */
+export async function reorderConnections(orderedIds: number[]): Promise<void> {
+  if (await isPersistentStorage()) {
+    unwrap(await reorderConnectionsAction(orderedIds));
+    return;
+  }
+
+  const rows = read<ConnectionConfig>(CONNECTIONS_KEY);
+  const moving = new Set(orderedIds);
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const reordered = orderedIds
+    .map((id) => byId.get(id))
+    .filter((row): row is ConnectionConfig => Boolean(row));
+
+  // Rebuild in place: walk the original array and, at each slot belonging to
+  // the moved group, drop in the next member of the new order. Rows outside
+  // the group never shift.
+  let next = 0;
+  write(
+    CONNECTIONS_KEY,
+    rows.map((row) =>
+      row.id !== undefined && moving.has(row.id) ? reordered[next++] : row
+    )
+  );
+}
+
+export async function toggleConnectionPin(
+  id: number,
+  pinned: boolean
+): Promise<void> {
+  if (await isPersistentStorage()) {
+    unwrap(await toggleConnectionPinAction(id, pinned));
+    return;
+  }
+
+  const rows = read<ConnectionConfig>(CONNECTIONS_KEY);
+  // Same limit and same refusal as the server: never silently evict a pin the
+  // user chose.
+  if (
+    pinned &&
+    rows.filter((r) => r.pinned && r.id !== id).length >= MAX_PINNED_CONNECTIONS
+  ) {
+    throw new Error(
+      `You can only pin up to ${MAX_PINNED_CONNECTIONS} connections. Unpin one first.`
+    );
+  }
+  write(
+    CONNECTIONS_KEY,
+    rows.map((row) => (row.id === id ? { ...row, pinned } : row))
+  );
 }
 
 export async function storeConnection(
@@ -89,7 +155,9 @@ export async function storeConnection(
   if (config.id) {
     const index = rows.findIndex((row) => row.id === config.id);
     if (index >= 0) {
-      rows[index] = config;
+      // `pinned` comes from the sidebar, not the edit form, so carry it over
+      // rather than letting a save silently unpin the connection.
+      rows[index] = { ...config, pinned: rows[index].pinned };
       write(CONNECTIONS_KEY, rows);
       return { id: config.id };
     }

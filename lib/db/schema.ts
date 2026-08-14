@@ -82,6 +82,22 @@ export async function ensureSchema(
     )
     .execute();
 
+  // Per-viewer sidebar arrangement. Both key columns are integers, so the
+  // unique constraint costs 8 bytes and MySQL takes it inline.
+  await db.schema
+    .createTable('connection_prefs')
+    .ifNotExists()
+    .addColumn('id', idType, idColumn)
+    .addColumn('user_id', 'integer', (c) => c.notNull())
+    .addColumn('connection_id', 'integer', (c) => c.notNull())
+    .addColumn('pinned', 'boolean', (c) => c.notNull().defaultTo(false))
+    .addColumn('sort_order', 'integer', (c) => c.notNull().defaultTo(0))
+    .addUniqueConstraint('connection_prefs_user_connection_unique', [
+      'user_id',
+      'connection_id',
+    ])
+    .execute();
+
   // Folder bookmarks, scoped to a connection. UNIQUE because double-pinning
   // the same folder has no meaning — unlike `connections`, where "same bucket
   // under a different name" is legitimate and so carries no such constraint.

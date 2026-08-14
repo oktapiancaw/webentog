@@ -31,11 +31,14 @@ import {
 } from '@/components/ui/sidebar';
 import {
   Settings,
+  Trash2,
   EyeOff,
   Eye,
   Save,
   Plus,
   MoreVertical,
+  GripVertical,
+  RefreshCw,
   Check,
   HardDrive,
   Pin,
@@ -94,6 +97,8 @@ import type { SessionPayload } from '@/lib/session';
 import Link from 'next/link';
 import {
   loadConnections,
+  reorderConnections,
+  toggleConnectionPin,
   storeConnection,
   removeConnection,
 } from '@/lib/storage-mode';
@@ -102,6 +107,23 @@ import { toastError } from '@/lib/errors';
 import { unwrap } from '@/lib/action-result';
 import { cn, explainError, getLastNameFromPath } from '@/lib/utils';
 import { WebEntogLogo } from '@/components/logo';
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import type { ValidatedPinnedFolder } from '@/app/actions/pinned-folders';
 
 interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
@@ -123,6 +145,189 @@ const INITIAL_FORM_STATE = {
   bucket: '',
   region: 'us-east-1',
 };
+
+/**
+ * One draggable connection row.
+ *
+ * Module scope, not nested in AppSidebar: a component defined inside another
+ * re-creates its type every render, which would remount every row and drop
+ * whatever drag is in progress.
+ */
+function ConnectionRow({
+  conn,
+  isActive,
+  currentUser,
+  confirmDeleteId,
+  onConnect,
+  onReconnect,
+  onEdit,
+  onAccess,
+  onTogglePin,
+  onRequestDelete,
+  onCancelDelete,
+  onConfirmDelete,
+}: {
+  conn: ConnectionConfig;
+  isActive: boolean;
+  currentUser: SessionPayload | null;
+  confirmDeleteId: number | null;
+  onConnect: (conn: ConnectionConfig) => void;
+  onReconnect: (conn: ConnectionConfig) => void;
+  onEdit: (conn: ConnectionConfig) => void;
+  onAccess: (conn: ConnectionConfig) => void;
+  onTogglePin: (conn: ConnectionConfig) => void;
+  onRequestDelete: (id: number) => void;
+  onCancelDelete: () => void;
+  onConfirmDelete: (id: number) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: conn.id! });
+
+  return (
+    <SidebarMenuItem
+      ref={setNodeRef}
+      style={{
+        // x zeroed so the row can only travel up and down. Cheaper than
+        // pulling in @dnd-kit/modifiers for the one restriction needed here.
+        transform: CSS.Transform.toString(
+          transform && { ...transform, x: 0, scaleX: 1 }
+        ),
+        transition,
+      }}
+      className={cn('group/item', isDragging && 'z-20 opacity-80')}
+    >
+      {/* Drag from the handle, not the row: the row's own click connects to
+          the bucket, and a whole-row drag target would swallow that. */}
+      <button
+        {...attributes}
+        {...listeners}
+        aria-label={`Reorder ${conn.name}`}
+        className="absolute left-0 top-0 z-10 flex h-11 w-5 cursor-grab items-center justify-center opacity-0 transition-opacity group-hover/item:opacity-100 focus-visible:opacity-100 active:cursor-grabbing"
+      >
+        <GripVertical className="size-3 text-muted-foreground" />
+      </button>
+
+      <SidebarMenuButton
+        // Already connected: clicking again would drop the current path and
+        // re-list for no reason. Reconnect is in the menu when it is wanted.
+        onClick={() => !isActive && onConnect(conn)}
+        aria-disabled={isActive || undefined}
+        title={isActive ? 'Already connected' : undefined}
+        isActive={isActive}
+        className={cn(
+          // pl-6 clears the drag handle's gutter, which is absolutely
+          // positioned over the row's left edge.
+          'h-11 border border-transparent pl-6 transition-colors',
+          isActive && 'cursor-default border-border bg-accent'
+        )}
+      >
+        <div className="flex w-full items-center gap-3 overflow-hidden">
+          <div
+            className={cn(
+              'flex size-6 shrink-0 items-center justify-center rounded-md border',
+              isActive
+                ? 'border-primary bg-primary text-primary-foreground'
+                : 'bg-muted text-muted-foreground'
+            )}
+          >
+            {isActive ? (
+              <Check className="size-3" />
+            ) : (
+              <HardDrive className="size-3" />
+            )}
+          </div>
+          <div className="flex flex-col items-start overflow-hidden">
+            <span className="flex w-full items-center gap-1 truncate text-[13px] text-strong">
+              {conn.pinned && (
+                <Pin className="size-2.5 shrink-0 fill-current" />
+              )}
+              <span className="truncate">{conn.name}</span>
+            </span>
+            <span className="w-full truncate font-mono text-[10px] text-muted-foreground">
+              {conn.bucket}
+              {/* Only admins see every connection, so only they
+                  need telling whose it is. */}
+              {currentUser?.role === 'admin' &&
+                conn.owner_username &&
+                conn.owner_id !== currentUser.userId && (
+                  <span className="ml-1.5 text-fog">
+                    · {conn.owner_username}
+                  </span>
+                )}
+            </span>
+          </div>
+        </div>
+      </SidebarMenuButton>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <SidebarMenuAction className="opacity-0 transition-opacity group-hover/item:opacity-100 data-[state=open]:opacity-100">
+            <MoreVertical className="size-3.5" />
+          </SidebarMenuAction>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40">
+          {isActive && (
+            <DropdownMenuItem onClick={() => onReconnect(conn)}>
+              <RefreshCw /> Reconnect
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onClick={() => onTogglePin(conn)}>
+            {conn.pinned ? (
+              <>
+                <PinOff /> Unpin
+              </>
+            ) : (
+              <>
+                <Pin /> Pin
+              </>
+            )}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onEdit(conn)}>
+            <Settings /> Edit config
+          </DropdownMenuItem>
+          {currentUser?.role === 'admin' && (
+            <DropdownMenuItem onClick={() => onAccess(conn)}>
+              <UsersIcon /> Manage access
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem
+            variant="destructive"
+            onClick={() => conn.id && onRequestDelete(conn.id)}
+          >
+            <Trash2 /> Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {/* Inline Delete Confirmation Overlay */}
+      {confirmDeleteId === conn.id && (
+        <div className="absolute inset-0 z-10 flex items-center justify-between rounded-md bg-destructive px-3 text-white duration-200 animate-in fade-in">
+          <span className="text-xs">Delete connection?</span>
+          <div className="flex gap-2">
+            <button
+              onClick={onCancelDelete}
+              className="text-[11px] hover:underline"
+            >
+              No
+            </button>
+            <button
+              onClick={() => onConfirmDelete(conn.id!)}
+              className="rounded-sm bg-white px-2 py-0.5 text-[11px] font-medium text-destructive"
+            >
+              Yes
+            </button>
+          </div>
+        </div>
+      )}
+    </SidebarMenuItem>
+  );
+}
 
 export function AppSidebar({
   onConnect,
@@ -227,6 +432,62 @@ export function AppSidebar({
     return connections;
   };
 
+  // Already ordered by the backend (pinned first, then the viewer's order), so
+  // this only splits the list — no re-sorting here.
+  const pinnedConnections = savedConnections.filter((c) => c.pinned);
+  const unpinnedConnections = savedConnections.filter((c) => !c.pinned);
+
+  const sensors = useSensors(
+    // A few pixels of travel before a drag starts, so a plain click on the
+    // handle is still a click and not a zero-distance drag.
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  /**
+   * Applies a drop within one group.
+   *
+   * Only that group's ids are sent, so the other group's positions are left
+   * alone. The reorder is applied locally first — the list must follow the
+   * cursor immediately — and rolled back by refetching if the write fails.
+   */
+  const handleDragEnd =
+    (group: ConnectionConfig[]) =>
+    async ({ active, over }: DragEndEvent) => {
+      if (!over || active.id === over.id) return;
+      const from = group.findIndex((c) => c.id === active.id);
+      const to = group.findIndex((c) => c.id === over.id);
+      if (from < 0 || to < 0) return;
+
+      const moved = arrayMove(group, from, to);
+      const movedIds = new Set(moved.map((c) => c.id));
+      let next = 0;
+      setSavedConnections((prev) =>
+        prev.map((row) => (movedIds.has(row.id) ? moved[next++] : row))
+      );
+
+      try {
+        await reorderConnections(moved.map((c) => c.id!));
+      } catch (error) {
+        toastError(error, 'Could not save that order.');
+        await fetchConnections();
+      }
+    };
+
+  const handleTogglePin = async (conn: ConnectionConfig) => {
+    if (!conn.id) return;
+    try {
+      await toggleConnectionPin(conn.id, !conn.pinned);
+      await fetchConnections(); // the pin changes which group it belongs to
+    } catch (error) {
+      // The "up to 3" refusal is the expected case, not a fault — show what it
+      // said rather than a generic failure.
+      toastError(error, 'Could not update that pin.');
+    }
+  };
+
   // A reload wipes the in-memory config but leaves ?conn= and ?path= behind.
   // Reconnect from ?conn= to keep the path valid. If it no longer resolves,
   // drop the stale path rather than browse a bucket we lost.
@@ -249,12 +510,18 @@ export function AppSidebar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleConnect = (config: ConnectionConfig) => {
-    if (onConnect) {
-      onConnect(config);
-      if (config.id) setActiveId(config.id);
-      toast.success(`Connecting to ${config.bucket}...`);
-    }
+  /**
+   * `force` is the Reconnect menu item: same work, but allowed on the
+   * connection that is already active, where a plain click is a no-op.
+   */
+  const handleConnect = (config: ConnectionConfig, force = false) => {
+    if (!onConnect) return;
+    if (!force && config.id && config.id === activeId) return;
+    onConnect(config);
+    if (config.id) setActiveId(config.id);
+    toast.success(
+      `${force ? 'Reconnecting' : 'Connecting'} to ${config.bucket}...`
+    );
   };
 
   /** Every field edit goes through here so a stale test result cannot linger. */
@@ -337,6 +604,20 @@ export function AppSidebar({
     setIsSheetOpen(true);
   };
 
+  /** Everything a row needs that is not the row itself. */
+  const rowProps = {
+    currentUser,
+    confirmDeleteId,
+    onConnect: handleConnect,
+    onReconnect: (conn: ConnectionConfig) => handleConnect(conn, true),
+    onEdit: openEdit,
+    onAccess: openAccess,
+    onTogglePin: handleTogglePin,
+    onRequestDelete: setConfirmDeleteId,
+    onCancelDelete: () => setConfirmDeleteId(null),
+    onConfirmDelete: handleDelete,
+  };
+
   return (
     <>
       <Sidebar collapsible="offcanvas" {...props}>
@@ -361,99 +642,65 @@ export function AppSidebar({
             <SidebarGroupLabel className="px-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
               Connections
             </SidebarGroupLabel>
-            <SidebarMenu className="space-y-0.5 px-2">
-              {savedConnections.map((conn) => (
-                <SidebarMenuItem key={conn.id} className="group/item">
-                  <SidebarMenuButton
-                    onClick={() => handleConnect(conn)}
-                    isActive={activeId === conn.id}
-                    className={cn(
-                      'h-11 border border-transparent transition-colors',
-                      activeId === conn.id && 'border-border bg-accent'
-                    )}
-                  >
-                    <div className="flex w-full items-center gap-3 overflow-hidden">
-                      <div
-                        className={cn(
-                          'flex size-6 shrink-0 items-center justify-center rounded-md border',
-                          activeId === conn.id
-                            ? 'border-primary bg-primary text-primary-foreground'
-                            : 'bg-muted text-muted-foreground'
-                        )}
-                      >
-                        {activeId === conn.id ? (
-                          <Check className="size-3" />
-                        ) : (
-                          <HardDrive className="size-3" />
-                        )}
-                      </div>
-                      <div className="flex flex-col items-start overflow-hidden">
-                        <span className="w-full truncate text-[13px] text-strong">
-                          {conn.name}
-                        </span>
-                        <span className="w-full truncate font-mono text-[10px] text-muted-foreground">
-                          {conn.bucket}
-                          {/* Only admins see every connection, so only they
-                              need telling whose it is. */}
-                          {currentUser?.role === 'admin' &&
-                            conn.owner_username &&
-                            conn.owner_id !== currentUser.userId && (
-                              <span className="ml-1.5 text-fog">
-                                · {conn.owner_username}
-                              </span>
-                            )}
-                        </span>
-                      </div>
-                    </div>
-                  </SidebarMenuButton>
+            {/* Pinned group: outside the scroll box on purpose — pinning is
+                how you keep a connection in view, so it must not scroll. */}
+            {pinnedConnections.length > 0 && (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd(pinnedConnections)}
+              >
+                <SortableContext
+                  items={pinnedConnections.map((c) => c.id!)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <SidebarMenu className="space-y-0.5 px-2">
+                    {pinnedConnections.map((conn) => (
+                      <ConnectionRow
+                        key={conn.id}
+                        conn={conn}
+                        isActive={activeId === conn.id}
+                        {...rowProps}
+                      />
+                    ))}
+                  </SidebarMenu>
+                </SortableContext>
+              </DndContext>
+            )}
 
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <SidebarMenuAction className="opacity-0 transition-opacity group-hover/item:opacity-100 data-[state=open]:opacity-100">
-                        <MoreVertical className="size-3.5" />
-                      </SidebarMenuAction>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-40">
-                      <DropdownMenuItem onClick={() => openEdit(conn)}>
-                        Edit config
-                      </DropdownMenuItem>
-                      {currentUser?.role === 'admin' && (
-                        <DropdownMenuItem onClick={() => openAccess(conn)}>
-                          Manage access
-                        </DropdownMenuItem>
-                      )}
-                      <DropdownMenuItem
-                        variant="destructive"
-                        onClick={() => conn.id && setConfirmDeleteId(conn.id)}
-                      >
-                        Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+            {pinnedConnections.length > 0 && unpinnedConnections.length > 0 && (
+              <div className="mx-2 my-1.5 border-t" />
+            )}
 
-                  {/* Inline Delete Confirmation Overlay */}
-                  {confirmDeleteId === conn.id && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-between rounded-md bg-destructive px-3 text-white duration-200 animate-in fade-in">
-                      <span className="text-xs">Delete connection?</span>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setConfirmDeleteId(null)}
-                          className="text-[11px] hover:underline"
-                        >
-                          No
-                        </button>
-                        <button
-                          onClick={() => handleDelete(conn.id!)}
-                          className="rounded-sm bg-white px-2 py-0.5 text-[11px] font-medium text-destructive"
-                        >
-                          Yes
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </SidebarMenuItem>
-              ))}
+            {/* Fixed height, not max-height: a box that grows and shrinks with
+                its contents moves the drop targets around mid-drag. About six
+                rows at h-11. */}
+            <div className="h-72 overflow-y-auto">
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleDragEnd(unpinnedConnections)}
+              >
+                <SortableContext
+                  items={unpinnedConnections.map((c) => c.id!)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <SidebarMenu className="space-y-0.5 px-2">
+                    {unpinnedConnections.map((conn) => (
+                      <ConnectionRow
+                        key={conn.id}
+                        conn={conn}
+                        isActive={activeId === conn.id}
+                        {...rowProps}
+                      />
+                    ))}
+                  </SidebarMenu>
+                </SortableContext>
+              </DndContext>
+            </div>
 
+            {/* Outside both containers so it never scrolls out of reach. */}
+            <SidebarMenu className="px-2">
               <SidebarMenuItem className="mt-2">
                 <Button
                   onClick={openCreateNew}

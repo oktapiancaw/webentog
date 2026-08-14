@@ -71,9 +71,39 @@ export interface PinnedFoldersTable {
   created_at: CreatedAt;
 }
 
+/**
+ * One viewer's ordering and pin state for one connection.
+ *
+ * Deliberately not columns on `connections`: a connection is visible to its
+ * owner and to everyone it has been granted to, so a pin or a position stored
+ * on the shared row would move the connection in every one of those sidebars
+ * at once. Keyed by (user_id, connection_id) instead, so each viewer arranges
+ * their own list.
+ *
+ * A row only appears once a user actually reorders or pins something. Absence
+ * means "default order, unpinned", so nothing needs backfilling.
+ */
+export interface ConnectionPrefsTable {
+  id: Generated<number>;
+  user_id: number;
+  connection_id: number;
+  /**
+   * Boolean on Postgres, 0/1 on SQLite and MySQL.
+   *
+   * better-sqlite3 binds only numbers, strings, bigints, buffers and null, so
+   * a JS boolean throws there; Postgres in turn rejects an integer for a
+   * boolean column. There is no single value that works on all three, so the
+   * type admits both and `pinnedValue()` picks per engine. Readers go through
+   * `Boolean()`.
+   */
+  pinned: boolean | number;
+  sort_order: number;
+}
+
 export interface Database {
   users: UsersTable;
   connections: ConnectionsTable;
   connection_grants: ConnectionGrantsTable;
   pinned_folders: PinnedFoldersTable;
+  connection_prefs: ConnectionPrefsTable;
 }
