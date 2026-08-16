@@ -1043,7 +1043,7 @@ function PageContent() {
           <FilePreview
             // Remount per file so the >10MB "show anyway" answer and any
             // half-typed rename do not carry over to the next object.
-            key={viewingFile?.id ?? 'none'}
+            key={viewingFile ? `preview:${viewingFile.id}` : 'preview:none'}
             file={viewingFile}
             url={viewingUrl}
             isLoading={isViewingLoading}
@@ -1063,8 +1063,10 @@ function PageContent() {
         {config && (
           <VersionHistoryDialog
             // Remount per file so fetch and confirm state reset without
-            // setState-in-effect.
-            key={versionsFile?.id ?? 'none'}
+            // setState-in-effect. The key is namespaced because the
+            // closed-state sentinel would otherwise collide with the sibling
+            // dialog's — two children keyed 'none' in the same parent.
+            key={versionsFile ? `versions:${versionsFile.id}` : 'versions:none'}
             file={versionsFile}
             config={config}
             onClose={closeVersions}
@@ -1078,8 +1080,8 @@ function PageContent() {
             // instead of resuming wherever the last picker was left.
             key={
               copyMoveTarget
-                ? `${copyMoveTarget.mode}:${copyMoveTarget.file.id}`
-                : 'none'
+                ? `copy-move:${copyMoveTarget.mode}:${copyMoveTarget.file.id}`
+                : 'copy-move:none'
             }
             target={copyMoveTarget}
             config={config}
