@@ -1,3 +1,17 @@
+## [1.4.3] - 2026-08-16
+
+### 🚀 Features
+
+- *(ui)* Add a loading screen for route and Suspense waits
+- *(ui)* Style the 404 page
+
+### 🐛 Bug Fixes
+
+- *(ui)* Duplicate names
+
+### 📚 Documentation
+
+- :bookmark: change package.json version to 1.4.3
 ## [1.4.2] - 2026-08-14
 
 ### 🚀 Features
@@ -6,6 +20,7 @@
 - *(browser)* Sortable columns and a folder size total
 - *(browser)* Right-click row menu, open folder in a new tab
 - *(preview)* Size gate, bounded text height, rename/copy/move
+- :memo: Add changelog entry for 1.4.2
 
 ### 🐛 Bug Fixes
 
